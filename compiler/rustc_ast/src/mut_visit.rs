@@ -279,7 +279,7 @@ macro_rules! generate_flat_map_visitor_fns {
                 }
             }
 
-            fn $name<V: MutVisitor>(
+            pub fn $name<V: MutVisitor>(
                 vis: &mut V,
                 values: &mut ThinVec<$Ty>,
                 $(

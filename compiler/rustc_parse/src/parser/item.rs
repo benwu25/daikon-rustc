@@ -1,8 +1,13 @@
 use std::fmt::Write;
 use std::mem;
 
+// use crate::parser::item::*;
+use rustc_ast::mut_visit::*;
+use rustc_ast::*;
+// use rustc_hir::*;
+
 use ast::token::IdentIsRaw;
-use rustc_ast::ast::*;
+// use rustc_ast::ast::*;
 use rustc_ast::ptr::P;
 use rustc_ast::token::{self, Delimiter, InvisibleOrigin, MetaVarKind, TokenKind};
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
@@ -25,6 +30,91 @@ use super::{
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent};
+
+// visitor struct
+struct FnVisitor;
+
+// how to continue to visit nested functions? mut_visit::walk_fn?
+// test nested functions first
+// note: can also check span here
+impl MutVisitor for FnVisitor {
+    fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+        let var_name = match &fk {
+            FnKind::Fn(_ctxt, _vis, f) => {
+                let mut s = String::from("__");
+                s.push_str(f.ident.as_str());
+                s
+            }
+            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => String::from("__zaza"),
+        };
+        let let_stmt = Stmt {
+            id: DUMMY_NODE_ID,
+            kind: ast::StmtKind::Let(Box::new(Local {
+                id: DUMMY_NODE_ID,
+                super_: None,
+                pat: Box::new(ast::Pat {
+                    id: DUMMY_NODE_ID,
+                    kind: ast::PatKind::Ident(
+                        ast::BindingMode(ByRef::No, Mutability::Not),
+                        rustc_span::Ident::from_str(var_name.as_str()),
+                        None,
+                    ),
+                    span: crate::Span::new(
+                        rustc_span::BytePos(0),
+                        rustc_span::BytePos(0),
+                        rustc_span::hygiene::SyntaxContext::root(),
+                        None,
+                    ),
+                    tokens: None,
+                }),
+                ty: None,
+                kind: ast::LocalKind::Init(Box::new(Expr {
+                    id: DUMMY_NODE_ID,
+                    // need literal with payload, not just a token
+                    kind: ast::ExprKind::Lit(token::Lit {
+                        kind: token::LitKind::Integer,
+                        symbol: sym::integer(42),
+                        suffix: None,
+                    }),
+                    span: crate::Span::new(
+                        rustc_span::BytePos(0),
+                        rustc_span::BytePos(0),
+                        rustc_span::hygiene::SyntaxContext::root(),
+                        None,
+                    ),
+                    attrs: ThinVec::new(),
+                    tokens: None,
+                })),
+                span: crate::Span::new(
+                    rustc_span::BytePos(0),
+                    rustc_span::BytePos(0),
+                    rustc_span::hygiene::SyntaxContext::root(),
+                    None,
+                ),
+                colon_sp: None,
+                attrs: ThinVec::new(),
+                tokens: None,
+            })),
+            span: crate::Span::new(
+                rustc_span::BytePos(0),
+                rustc_span::BytePos(0),
+                rustc_span::hygiene::SyntaxContext::root(),
+                None,
+            ),
+        };
+        // match fk
+        match &mut fk {
+            FnKind::Fn(_ctxt, _vis, f) => match &mut f.body {
+                Some(body) => {
+                    body.stmts.insert(0, let_stmt);
+                }
+                None => {}
+            },
+            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => {}
+        };
+        ast::mut_visit::walk_fn(self, fk);
+    }
+}
 
 impl<'a> Parser<'a> {
     /// Parses a source module as a crate. This is the main entry point for the parser.
@@ -59,6 +149,23 @@ impl<'a> Parser<'a> {
     ) -> PResult<'a, (AttrVec, ThinVec<P<Item>>, ModSpans)> {
         let lo = self.token.span;
         let attrs = self.parse_inner_attributes()?;
+
+        // get current file and determine whether to apply visitor
+        let source_map = self.psess.source_map();
+        let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
+        let do_visitor = match &source_file {
+            Some(sf) => match &sf.name {
+                rustc_span::FileName::Real(file_name) => match &file_name {
+                    rustc_span::RealFileName::LocalPath(path) => match &path.to_str() {
+                        Some(str) => !str.starts_with("library"),
+                        None => false,
+                    },
+                    _ => false,
+                },
+                _ => false,
+            },
+            None => false,
+        };
 
         let post_attr_lo = self.token.span;
         let mut items: ThinVec<P<_>> = ThinVec::new();
@@ -107,6 +214,12 @@ impl<'a> Parser<'a> {
                 err.note("for a full list of items that can appear in modules, see <https://doc.rust-lang.org/reference/items.html>");
                 return Err(err);
             }
+        }
+
+        // apply MutVisitor
+        if do_visitor {
+            let mut x = FnVisitor {};
+            mut_visit::visit_items(&mut x, &mut items);
         }
 
         let inject_use_span = post_attr_lo.data().with_hi(post_attr_lo.lo());
