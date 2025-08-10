@@ -29,10 +29,10 @@ use super::{
     Recovered, Trailing, UsePreAttrPos,
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
-use crate::{exp, fluent_generated as fluent};
+use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
 // visitor struct
-struct FnVisitor;
+struct FnVisitor {}
 
 // how to continue to visit nested functions? mut_visit::walk_fn?
 // test nested functions first
@@ -215,6 +215,24 @@ impl<'a> Parser<'a> {
                 return Err(err);
             }
         }
+
+        // println!("{:?}", items);
+        let s = String::from("fn bizzy(){}");
+        let tmp = new_parser_from_source_str(&self.psess,
+                                                        rustc_span::FileName::anon_source_code("no_use"),
+                                                        s);
+        let mut tmp_parser = tmp.unwrap();
+        let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
+
+        // parse from s
+        loop {
+            while tmp_parser.maybe_consume_incorrect_semicolon(tmp_items.last().map(|x| &**x)) {}
+            let Some(item) = tmp_parser.parse_item(ForceCollect::No)? else {
+                break;
+            };
+            tmp_items.push(item);
+        }
+        println!("{:?}", tmp_items);
 
         // apply MutVisitor
         if do_visitor {
