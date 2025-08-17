@@ -32,86 +32,33 @@ use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroE
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
 // visitor struct
-struct FnVisitor {}
+struct FnVisitor<'a> {
+  pub parser: &'a Parser<'a>,
+}
 
-// how to continue to visit nested functions? mut_visit::walk_fn?
-// test nested functions first
-// note: can also check span here
-impl MutVisitor for FnVisitor {
+impl<'a> MutVisitor for FnVisitor<'a> {
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
-        let var_name = match &fk {
-            FnKind::Fn(_ctxt, _vis, f) => {
-                let mut s = String::from("__");
-                s.push_str(f.ident.as_str());
-                s
-            }
-            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => String::from("__zaza"),
-        };
-        let let_stmt = Stmt {
-            id: DUMMY_NODE_ID,
-            kind: ast::StmtKind::Let(Box::new(Local {
-                id: DUMMY_NODE_ID,
-                super_: None,
-                pat: Box::new(ast::Pat {
-                    id: DUMMY_NODE_ID,
-                    kind: ast::PatKind::Ident(
-                        ast::BindingMode(ByRef::No, Mutability::Not),
-                        rustc_span::Ident::from_str(var_name.as_str()),
-                        None,
-                    ),
-                    span: crate::Span::new(
-                        rustc_span::BytePos(0),
-                        rustc_span::BytePos(0),
-                        rustc_span::hygiene::SyntaxContext::root(),
-                        None,
-                    ),
-                    tokens: None,
-                }),
-                ty: None,
-                kind: ast::LocalKind::Init(Box::new(Expr {
-                    id: DUMMY_NODE_ID,
-                    // need literal with payload, not just a token
-                    kind: ast::ExprKind::Lit(token::Lit {
-                        kind: token::LitKind::Integer,
-                        symbol: sym::integer(42),
-                        suffix: None,
-                    }),
-                    span: crate::Span::new(
-                        rustc_span::BytePos(0),
-                        rustc_span::BytePos(0),
-                        rustc_span::hygiene::SyntaxContext::root(),
-                        None,
-                    ),
-                    attrs: ThinVec::new(),
-                    tokens: None,
-                })),
-                span: crate::Span::new(
-                    rustc_span::BytePos(0),
-                    rustc_span::BytePos(0),
-                    rustc_span::hygiene::SyntaxContext::root(),
-                    None,
-                ),
-                colon_sp: None,
-                attrs: ThinVec::new(),
-                tokens: None,
-            })),
-            span: crate::Span::new(
-                rustc_span::BytePos(0),
-                rustc_span::BytePos(0),
-                rustc_span::hygiene::SyntaxContext::root(),
-                None,
-            ),
-        };
-        // match fk
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => match &mut f.body {
+                None => {},
                 Some(body) => {
-                    body.stmts.insert(0, let_stmt);
-                }
-                None => {}
+                    let items = self.parser.parse_items_from_string(String::from("fn main() { println!(\"hello, world\"); }"));
+                    match &items {
+                        Err(_why) => panic!("couldn't parse internal string"),
+                        Ok(items) => match &items[0].kind {
+                            ItemKind::Fn(fun) => match &fun.body {
+                                None => {},
+                                Some(bd) => {
+                                    body.stmts.insert(0, bd.stmts[0].clone());
+                                },
+                            },
+                            _ => {}
+                        }
+                    }
+                },
             },
-            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => {}
-        };
+            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => {},
+        }
         ast::mut_visit::walk_fn(self, fk);
     }
 }
@@ -139,6 +86,25 @@ impl<'a> Parser<'a> {
         Ok(ItemKind::Mod(safety, ident, mod_kind))
     }
 
+    // Convert String to items
+    pub fn parse_items_from_string(&self, str: String) -> PResult<'a, ThinVec<P<Item>>> {
+        let tmp = new_parser_from_source_str(&self.psess,
+                                                 rustc_span::FileName::anon_source_code("no_use"),
+                                                 str);
+        let mut tmp_parser = tmp.unwrap();
+        let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
+
+        // parse from str
+        loop {
+            while tmp_parser.maybe_consume_incorrect_semicolon(tmp_items.last().map(|x| &**x)) {}
+            let Some(item) = tmp_parser.parse_item(ForceCollect::No)? else {
+                break;
+            };
+            tmp_items.push(item);
+        }
+        Ok(tmp_items)
+    }
+
     /// Parses the contents of a module (inner attributes followed by module items).
     /// We exit once we hit `term` which can be either
     /// - EOF (for files)
@@ -150,14 +116,14 @@ impl<'a> Parser<'a> {
         let lo = self.token.span;
         let attrs = self.parse_inner_attributes()?;
 
-        // get current file and determine whether to apply visitor
+        // Determine whether we are building internally
         let source_map = self.psess.source_map();
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         let do_visitor = match &source_file {
             Some(sf) => match &sf.name {
                 rustc_span::FileName::Real(file_name) => match &file_name {
                     rustc_span::RealFileName::LocalPath(path) => match &path.to_str() {
-                        Some(str) => !str.starts_with("library"),
+                        Some(str) => !str.starts_with("library") && !str.contains(".cargo"),
                         None => false,
                     },
                     _ => false,
@@ -216,27 +182,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // println!("{:?}", items);
-        let s = String::from("fn bizzy(){}");
-        let tmp = new_parser_from_source_str(&self.psess,
-                                                        rustc_span::FileName::anon_source_code("no_use"),
-                                                        s);
-        let mut tmp_parser = tmp.unwrap();
-        let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
-
-        // parse from s
-        loop {
-            while tmp_parser.maybe_consume_incorrect_semicolon(tmp_items.last().map(|x| &**x)) {}
-            let Some(item) = tmp_parser.parse_item(ForceCollect::No)? else {
-                break;
-            };
-            tmp_items.push(item);
-        }
-        println!("{:?}", tmp_items);
-
         // apply MutVisitor
         if do_visitor {
-            let mut x = FnVisitor {};
+            let mut x = FnVisitor { parser: &self };
             mut_visit::visit_items(&mut x, &mut items);
         }
 
