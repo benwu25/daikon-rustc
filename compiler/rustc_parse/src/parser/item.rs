@@ -31,12 +31,35 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
+/*
+Notes on type context needed to generate Daikon routines
+
+ * for functions, you have parameter types. you can identify primitives.
+   you can assume you can call x.dtrace_print_fields() for any struct
+   or X::dtrace_print_fields_vec() for any array of structs.
+ * to implement the needed functions for a struct X, we need a way to
+   access the fields and types of X and use that information to generate
+   an impl block, maybe most simply where the struct is defined. since we
+   have the vec of items in parse_mod, can't we simply make the items vec
+   accessible to DaikonVisitor and push impl blocks onto items as we
+   go along? we can also push dtrace library routines onto items.
+
+*/
+
 // visitor struct
-struct FnVisitor<'a> {
+struct DaikonVisitor<'a> {
   pub parser: &'a Parser<'a>,
 }
 
-impl<'a> MutVisitor for FnVisitor<'a> {
+impl<'a> MutVisitor for DaikonVisitor<'a> {
+    fn visit_item(&mut self, item: &mut Item) {
+
+      // TODO: match item with various constructs which do not have a
+      //       visit_* function  (e.g. no visit_struct)
+
+      ast::mut_visit::walk_item(self, item);
+    }
+
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => match &mut f.body {
@@ -184,7 +207,7 @@ impl<'a> Parser<'a> {
 
         // apply MutVisitor
         if do_visitor {
-            let mut x = FnVisitor { parser: &self };
+            let mut x = DaikonVisitor { parser: &self };
             mut_visit::visit_items(&mut x, &mut items);
         }
 
