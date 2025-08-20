@@ -62,12 +62,73 @@ impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => match &mut f.body {
 
-
                 None => {},
                 Some(_body) => {
 
                     // push f
                     println!("now visiting\n{}\n\n", f.ident);
+
+                    // Print parameter names and types.
+                    let mut param_idents = Vec::new();
+                    let mut type_idents = Vec::new();
+                    let mut i = 0;
+                    while i < f.sig.decl.inputs.len() {
+
+                        match &f.sig.decl.inputs[i].pat.kind {
+                            PatKind::Ident(_mode, ident, None) => {
+                                print!("{}: ", ident);
+                                param_idents.push(ident.clone());
+                            },
+                            _ => { println!("what param is this?"); }
+                        }
+
+                        match &f.sig.decl.inputs[i].ty.kind {
+                            // Types can be complex. Need a better way to match against
+                            // things we want to deal with.
+                            // For enums and unions, implement a dummy version of dtrace stuff,
+                            // (both enums and unions are allowed impl blocks), noops which don't
+                            // do anything when they are called.
+
+                            // Do I care about lifetime specifiers? Maybe at exit if it has "died".
+                            // Otherwise can't think of anything.
+
+                            // Test to see where they are stored in Path.
+
+                            // Next process generics, mainly for Vec.
+                            TyKind::Path(None, path) => {
+                                if path.segments.len() == 0 {
+                                    panic!("What type is this?");
+                                }
+                                println!("{}", path.segments[path.segments.len()-1].ident);
+                                type_idents.push(path.segments[path.segments.len()-1].ident.clone());
+                            },
+                            TyKind::Ref(None, mut_ty) => match &mut_ty.ty.kind {
+                                TyKind::Path(None, path) => {
+                                    if path.segments.len() == 0 {
+                                        panic!("What ref type is this?");
+                                    }
+                                    println!("&{}", path.segments[path.segments.len()-1].ident);
+                                    type_idents.push(path.segments[path.segments.len()-1].ident.clone());
+                                },
+                                TyKind::Ref(_, _second_mut_ty) => { println!("This is >= double ref with no lifetime for first ref.") },
+                                _ => { println!("&<something> -- e.g., Array, Ptr, ..."); },
+                            },
+                            TyKind::Ref(Some(_lifetime), mut_ty) => match &mut_ty.ty.kind {
+                                TyKind::Path(None, path) => {
+                                    if path.segments.len() == 0 {
+                                        panic!("What ref + lifetime type is this?");
+                                    }
+                                    println!("&'? {}", path.segments[path.segments.len()-1].ident);
+                                    type_idents.push(path.segments[path.segments.len()-1].ident.clone());
+                                },
+                                TyKind::Ref(_, _second_mut_ty) => { println!("This is >= double ref with a lifetime specifier for first ref.") },
+                                _ => { println!("&'? <something> -- e.g., Array, Ptr, ..."); }
+                            }
+                            _ => { println!("what type is this? (not Path or Ref) -- e.g., Array, Ptr, ..."); }
+                        }
+
+                        i += 1;
+                    }
 
                     // if you substitute identifiers in Strings before parsing, parsed items will never need to be mut.
                     let items = self.parser.parse_items_from_string(String::from("fn main() { println!(\"hello, world\"); }"));
