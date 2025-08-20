@@ -32,52 +32,64 @@ use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroE
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
 /*
-Notes on type context needed to generate Daikon routines
-
- * for functions, you have parameter types. you can identify primitives.
-   you can assume you can call x.dtrace_print_fields() for any struct
-   or X::dtrace_print_fields_vec() for any array of structs.
- * to implement the needed functions for a struct X, we need a way to
-   access the fields and types of X and use that information to generate
-   an impl block, maybe most simply where the struct is defined. since we
-   have the vec of items in parse_mod, can't we simply make the items vec
-   accessible to DaikonVisitor and push impl blocks onto items as we
-   go along? we can also push dtrace library routines onto items.
-
+   Visitor for inserting calls to dtrace routines
+   at ppt-enter and ppt-exit(s)
 */
+struct DaikonCallInserterVisitor<'a> {
+    // For parsing String fragments
+    pub parser: &'a Parser<'a>,
 
-// visitor struct
-struct DaikonVisitor<'a> {
-  pub parser: &'a Parser<'a>,
+    // For repeating dtrace calls at exits  (probably should be careful of renaming and drops..., some or all of which should be nonsensical)
+    // pub Stack of String of dtrace calls you have inserted at the beginning of the current function
+
+    // To know what dtrace routine to add at exits
+    // pub Stack of ret_ty
 }
 
-impl<'a> MutVisitor for DaikonVisitor<'a> {
-    fn visit_item(&mut self, item: &mut Item) {
+impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
+    fn visit_block(&mut self, block: &mut Block) {
 
-      // TODO: match item with various constructs which do not have a
-      //       visit_* function  (e.g. no visit_struct)
+        println!("now visiting\n{:?}\n\n", block);
 
-      ast::mut_visit::walk_item(self, item);
+        ast::mut_visit::walk_block(self, block);
+
+        println!("done visiting\n{:?}\n\n", block);
     }
 
+
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => match &mut f.body {
+
+
                 None => {},
-                Some(body) => {
+                Some(_body) => {
+
+                    // push f
+                    println!("now visiting\n{}\n\n", f.ident);
+
+                    // if you substitute identifiers in Strings before parsing, parsed items will never need to be mut.
                     let items = self.parser.parse_items_from_string(String::from("fn main() { println!(\"hello, world\"); }"));
                     match &items {
                         Err(_why) => panic!("couldn't parse internal string"),
                         Ok(items) => match &items[0].kind {
                             ItemKind::Fn(fun) => match &fun.body {
                                 None => {},
-                                Some(bd) => {
-                                    body.stmts.insert(0, bd.stmts[0].clone());
+                                Some(_bd) => {
+                                    // body.stmts.insert(0, bd.stmts[0].clone());
                                 },
                             },
                             _ => {}
                         }
                     }
+
+                    let id = f.ident.clone();
+                    ast::mut_visit::walk_fn(self, fk);
+                    // pop f
+                    println!("done visiting\n{}\n\n", id);
+                    return;
+
                 },
             },
             FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => {},
@@ -85,6 +97,34 @@ impl<'a> MutVisitor for DaikonVisitor<'a> {
         ast::mut_visit::walk_fn(self, fk);
     }
 }
+
+/*
+   Visitor for defining struct-specific routines
+*/
+struct DaikonImplInserterVisitor<'a> {
+    // For parsing string fragments
+    pub _parser: &'a Parser<'a>,
+
+    // For appending impl blocks to the file
+    pub _mod_items: &'a mut ThinVec<P<Item>>,
+
+    // For
+    // pub stack of fn sig
+}
+
+impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
+    fn visit_item(&mut self, item: &mut Item) {
+
+        /* TODO: match item with struct.
+                 also match with items where
+                 nested structs can be defined,
+                 e.g. Fn, ... ?
+        */
+
+        ast::mut_visit::walk_item(self, item);
+    }
+}
+
 
 impl<'a> Parser<'a> {
     /// Parses a source module as a crate. This is the main entry point for the parser.
@@ -117,7 +157,7 @@ impl<'a> Parser<'a> {
         let mut tmp_parser = tmp.unwrap();
         let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
 
-        // parse from str
+        // Parse from str
         loop {
             while tmp_parser.maybe_consume_incorrect_semicolon(tmp_items.last().map(|x| &**x)) {}
             let Some(item) = tmp_parser.parse_item(ForceCollect::No)? else {
@@ -205,10 +245,25 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // apply MutVisitor
+
+        //== Daikon dtrace instrumentation passes ==//
+
         if do_visitor {
-            let mut x = DaikonVisitor { parser: &self };
-            mut_visit::visit_items(&mut x, &mut items);
+
+            // TODO: implement
+            // add dtrace calls
+            let mut call_inserter = DaikonCallInserterVisitor { parser: &self };
+            mut_visit::visit_items(&mut call_inserter, &mut items);
+
+            // TODO: implement
+            // define struct-specific calls
+            let mut items_to_append: ThinVec<P<_>> = ThinVec::new();
+            let mut impl_inserter = DaikonImplInserterVisitor { _parser: &self, _mod_items: &mut items_to_append };
+            mut_visit::visit_items(&mut impl_inserter, &mut items);
+
+            // TODO: implement
+            // finally, append items_to_append + generic daikon library routines to the mod
+
         }
 
         let inject_use_span = post_attr_lo.data().with_hi(post_attr_lo.lo());
