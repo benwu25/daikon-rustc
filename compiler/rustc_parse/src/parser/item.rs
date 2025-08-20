@@ -83,6 +83,8 @@ impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
                         }
 
                         match &f.sig.decl.inputs[i].ty.kind {
+
+                            //== Notes ==//
                             // Types can be complex. Need a better way to match against
                             // things we want to deal with.
                             // For enums and unions, implement a dummy version of dtrace stuff,
@@ -95,12 +97,46 @@ impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
                             // Test to see where they are stored in Path.
 
                             // Next process generics, mainly for Vec.
+
+
                             TyKind::Path(None, path) => {
                                 if path.segments.len() == 0 {
                                     panic!("What type is this?");
                                 }
-                                println!("{}", path.segments[path.segments.len()-1].ident);
+
                                 type_idents.push(path.segments[path.segments.len()-1].ident.clone());
+
+                                if path.segments[path.segments.len()-1].ident.as_str() == "Vec" {
+                                    print!("{}", path.segments[path.segments.len()-1].ident);
+
+                                    // Check generic Args
+                                    match &path.segments[path.segments.len()-1].args {
+                                        None => {},
+                                        Some(args) => match &**args {
+                                            GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
+                                                AngleBracketedArg::Arg(arg) => match &arg {
+                                                    GenericArg::Type(ty) => match &ty.kind {
+                                                        TyKind::Path(None, path) => {
+                                                            if path.segments.len() == 0 {
+                                                                panic!("What is this generic arg type?");
+                                                            }
+
+                                                            println!("<{}>", path.segments[path.segments.len()-1].ident);
+                                                        },
+                                                        TyKind::Ref(None, _mut_ty) => {},
+                                                        TyKind::Ref(Some(_lifetime), _mut_ty) => {},
+                                                        _ => {},
+                                                    },
+                                                    _ => {},
+                                                },
+                                                _ => {},
+                                            },
+                                            _ => {},
+                                        }
+                                    }
+                                } else { // generic args aren't important?
+                                    println!("{}", path.segments[path.segments.len()-1].ident);
+                                }
                             },
                             TyKind::Ref(None, mut_ty) => match &mut_ty.ty.kind {
                                 TyKind::Path(None, path) => {
