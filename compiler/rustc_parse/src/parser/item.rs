@@ -38,7 +38,6 @@ use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 struct DaikonCallInserterVisitor<'a> {
     // For parsing String fragments
     pub parser: &'a Parser<'a>,
-
     // For repeating dtrace calls at exits  (probably should be careful of renaming and drops..., some or all of which should be nonsensical)
     // pub Stack of String of dtrace calls you have inserted at the beginning of the current function
 
@@ -48,7 +47,6 @@ struct DaikonCallInserterVisitor<'a> {
 
 impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
     fn visit_block(&mut self, block: &mut Block) {
-
         println!("now visiting\n{:?}\n\n", block);
 
         ast::mut_visit::walk_block(self, block);
@@ -56,15 +54,11 @@ impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
         println!("done visiting\n{:?}\n\n", block);
     }
 
-
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
-
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => match &mut f.body {
-
-                None => {},
+                None => {}
                 Some(_body) => {
-
                     // push f
                     println!("now visiting\n{}\n\n", f.ident);
 
@@ -73,17 +67,17 @@ impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
                     let mut type_idents = Vec::new();
                     let mut i = 0;
                     while i < f.sig.decl.inputs.len() {
-
                         match &f.sig.decl.inputs[i].pat.kind {
                             PatKind::Ident(_mode, ident, None) => {
                                 print!("{}: ", ident);
                                 param_idents.push(ident.clone());
-                            },
-                            _ => { println!("what param is this?"); }
+                            }
+                            _ => {
+                                println!("what param is this?");
+                            }
                         }
 
                         match &f.sig.decl.inputs[i].ty.kind {
-
                             //== Notes ==//
                             // Types can be complex. Need a better way to match against
                             // things we want to deal with.
@@ -97,88 +91,123 @@ impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
                             // Test to see where they are stored in Path.
 
                             // Next process generics, mainly for Vec.
-
-
                             TyKind::Path(None, path) => {
                                 if path.segments.len() == 0 {
                                     panic!("What type is this?");
                                 }
 
-                                type_idents.push(path.segments[path.segments.len()-1].ident.clone());
+                                type_idents
+                                    .push(path.segments[path.segments.len() - 1].ident.clone());
 
-                                if path.segments[path.segments.len()-1].ident.as_str() == "Vec" {
-                                    print!("{}", path.segments[path.segments.len()-1].ident);
+                                if path.segments[path.segments.len() - 1].ident.as_str() == "Vec" {
+                                    print!("{}", path.segments[path.segments.len() - 1].ident);
 
                                     // Check generic Args
-                                    match &path.segments[path.segments.len()-1].args {
-                                        None => {},
+                                    match &path.segments[path.segments.len() - 1].args {
+                                        None => {}
                                         Some(args) => match &**args {
-                                            GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
-                                                AngleBracketedArg::Arg(arg) => match &arg {
-                                                    GenericArg::Type(ty) => match &ty.kind {
-                                                        TyKind::Path(None, path) => {
-                                                            if path.segments.len() == 0 {
-                                                                panic!("What is this generic arg type?");
-                                                            }
+                                            GenericArgs::AngleBracketed(brack_args) => {
+                                                match &brack_args.args[0] {
+                                                    AngleBracketedArg::Arg(arg) => match &arg {
+                                                        GenericArg::Type(ty) => match &ty.kind {
+                                                            TyKind::Path(None, path) => {
+                                                                if path.segments.len() == 0 {
+                                                                    panic!(
+                                                                        "What is this generic arg type?"
+                                                                    );
+                                                                }
 
-                                                            println!("<{}>", path.segments[path.segments.len()-1].ident);
+                                                                println!(
+                                                                    "<{}>",
+                                                                    path.segments
+                                                                        [path.segments.len() - 1]
+                                                                        .ident
+                                                                );
+                                                            }
+                                                            TyKind::Ref(None, _mut_ty) => {}
+                                                            TyKind::Ref(
+                                                                Some(_lifetime),
+                                                                _mut_ty,
+                                                            ) => {}
+                                                            _ => {}
                                                         },
-                                                        TyKind::Ref(None, _mut_ty) => {},
-                                                        TyKind::Ref(Some(_lifetime), _mut_ty) => {},
-                                                        _ => {},
+                                                        _ => {}
                                                     },
-                                                    _ => {},
-                                                },
-                                                _ => {},
-                                            },
-                                            _ => {},
-                                        }
+                                                    _ => {}
+                                                }
+                                            }
+                                            _ => {}
+                                        },
                                     }
-                                } else { // generic args aren't important?
-                                    println!("{}", path.segments[path.segments.len()-1].ident);
+                                } else {
+                                    // generic args aren't important?
+                                    println!("{}", path.segments[path.segments.len() - 1].ident);
                                 }
-                            },
+                            }
                             TyKind::Ref(None, mut_ty) => match &mut_ty.ty.kind {
                                 TyKind::Path(None, path) => {
                                     if path.segments.len() == 0 {
                                         panic!("What ref type is this?");
                                     }
-                                    println!("&{}", path.segments[path.segments.len()-1].ident);
-                                    type_idents.push(path.segments[path.segments.len()-1].ident.clone());
-                                },
-                                TyKind::Ref(_, _second_mut_ty) => { println!("This is >= double ref with no lifetime for first ref.") },
-                                _ => { println!("&<something> -- e.g., Array, Ptr, ..."); },
+                                    println!("&{}", path.segments[path.segments.len() - 1].ident);
+                                    type_idents
+                                        .push(path.segments[path.segments.len() - 1].ident.clone());
+                                }
+                                TyKind::Ref(_, _second_mut_ty) => {
+                                    println!(
+                                        "This is >= double ref with no lifetime for first ref."
+                                    )
+                                }
+                                _ => {
+                                    println!("&<something> -- e.g., Array, Ptr, ...");
+                                }
                             },
                             TyKind::Ref(Some(_lifetime), mut_ty) => match &mut_ty.ty.kind {
                                 TyKind::Path(None, path) => {
                                     if path.segments.len() == 0 {
                                         panic!("What ref + lifetime type is this?");
                                     }
-                                    println!("&'? {}", path.segments[path.segments.len()-1].ident);
-                                    type_idents.push(path.segments[path.segments.len()-1].ident.clone());
-                                },
-                                TyKind::Ref(_, _second_mut_ty) => { println!("This is >= double ref with a lifetime specifier for first ref.") },
-                                _ => { println!("&'? <something> -- e.g., Array, Ptr, ..."); }
+                                    println!(
+                                        "&'? {}",
+                                        path.segments[path.segments.len() - 1].ident
+                                    );
+                                    type_idents
+                                        .push(path.segments[path.segments.len() - 1].ident.clone());
+                                }
+                                TyKind::Ref(_, _second_mut_ty) => {
+                                    println!(
+                                        "This is >= double ref with a lifetime specifier for first ref."
+                                    )
+                                }
+                                _ => {
+                                    println!("&'? <something> -- e.g., Array, Ptr, ...");
+                                }
+                            },
+                            _ => {
+                                println!(
+                                    "what type is this? (not Path or Ref) -- e.g., Array, Ptr, ..."
+                                );
                             }
-                            _ => { println!("what type is this? (not Path or Ref) -- e.g., Array, Ptr, ..."); }
                         }
 
                         i += 1;
                     }
 
                     // if you substitute identifiers in Strings before parsing, parsed items will never need to be mut.
-                    let items = self.parser.parse_items_from_string(String::from("fn main() { println!(\"hello, world\"); }"));
+                    let items = self.parser.parse_items_from_string(String::from(
+                        "fn main() { println!(\"hello, world\"); }",
+                    ));
                     match &items {
                         Err(_why) => panic!("couldn't parse internal string"),
                         Ok(items) => match &items[0].kind {
                             ItemKind::Fn(fun) => match &fun.body {
-                                None => {},
+                                None => {}
                                 Some(_bd) => {
                                     // body.stmts.insert(0, bd.stmts[0].clone());
-                                },
+                                }
                             },
                             _ => {}
-                        }
+                        },
                     }
 
                     let id = f.ident.clone();
@@ -186,10 +215,9 @@ impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
                     // pop f
                     println!("done visiting\n{}\n\n", id);
                     return;
-
-                },
+                }
             },
-            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => {},
+            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => {}
         }
         ast::mut_visit::walk_fn(self, fk);
     }
@@ -202,26 +230,246 @@ struct DaikonImplInserterVisitor<'a> {
     // For parsing string fragments
     pub _parser: &'a Parser<'a>,
 
-    // For appending impl blocks to the file
+    // For appending impl blocks to the file (tested, works to push to items in parse_mod)
     pub _mod_items: &'a mut ThinVec<P<Item>>,
-
-    // For
-    // pub stack of fn sig
 }
 
-impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
-    fn visit_item(&mut self, item: &mut Item) {
+// call generation subroutines?
+// get_dtrace_block_with_ident_placeholders(type: String/enum) -> Vec<String>
+// sub_placeholders_with_ident(ident: String, placeholders: Vec<String>) -> String
 
-        /* TODO: match item with struct.
-                 also match with items where
-                 nested structs can be defined,
-                 e.g. Fn, ... ?
-        */
+// very coarse-grained categories we will crunch types into for Daikon to munch\
+#[allow(dead_code)]
+#[derive(PartialEq)]
+enum BasicType {
+    Prim(String),
+    UserDef,
+    PrimVec(String),
+    UserDefVec,
+    PrimArray(String),
+    UserDefArray,
+    Error,
+}
 
-        ast::mut_visit::walk_item(self, item);
+#[allow(dead_code)]
+fn get_param_ident(pat: &P<Pat>) -> String {
+    match &pat.kind {
+        PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
+        _ => panic!("Formal arg does not have simple identifier"),
     }
 }
 
+// Proper primitive types
+// i8, i16, i32, i64, i128 and isize
+// u8, u16, u32, u64, u128 and usize
+// f32, f64
+// char
+// bool
+// () -- why is this possible for parameters :/
+
+// Other types for Daikon to munch
+// str
+// String
+// Vec
+// more to come?
+
+static I8: &str = "i8";
+static I16: &str = "i16";
+static I32: &str = "i32";
+static I64: &str = "i64";
+static I128: &str = "i128";
+static ISIZE: &str = "isize";
+
+static U8: &str = "u8";
+static U16: &str = "u16";
+static U32: &str = "u32";
+static U64: &str = "u64";
+static U128: &str = "u128";
+static USIZE: &str = "usize";
+
+static F32: &str = "f32";
+static F64: &str = "f64";
+
+static CHAR: &str = "char";
+static BOOL: &str = "bool";
+static UNIT: &str = "()";
+static STR: &str = "str";
+static STRING: &str = "String";
+static VEC: &str = "Vec";
+
+fn check_prim(ty_str: &str) -> BasicType {
+    if ty_str == I8 {
+        return BasicType::Prim(String::from(I8));
+    } else if ty_str == I16 {
+        return BasicType::Prim(String::from(I16));
+    } else if ty_str == I32 {
+        return BasicType::Prim(String::from(I32));
+    } else if ty_str == I64 {
+        return BasicType::Prim(String::from(I64));
+    } else if ty_str == I128 {
+        return BasicType::Prim(String::from(I128));
+    } else if ty_str == ISIZE {
+        return BasicType::Prim(String::from(ISIZE));
+    } else if ty_str == U8 {
+        return BasicType::Prim(String::from(U8));
+    } else if ty_str == U16 {
+        return BasicType::Prim(String::from(U16));
+    } else if ty_str == U32 {
+        return BasicType::Prim(String::from(U32));
+    } else if ty_str == U64 {
+        return BasicType::Prim(String::from(U64));
+    } else if ty_str == U128 {
+        return BasicType::Prim(String::from(U128));
+    } else if ty_str == USIZE {
+        return BasicType::Prim(String::from(USIZE));
+    } else if ty_str == F32 {
+        return BasicType::Prim(String::from(F32));
+    } else if ty_str == F64 {
+        return BasicType::Prim(String::from(F64));
+    } else if ty_str == CHAR {
+        return BasicType::Prim(String::from(CHAR));
+    } else if ty_str == BOOL {
+        return BasicType::Prim(String::from(BOOL));
+    } else if ty_str == UNIT {
+        return BasicType::Prim(String::from(UNIT));
+    } else if ty_str == STR {
+        return BasicType::Prim(String::from(STR));
+    } else if ty_str == STRING {
+        return BasicType::Prim(String::from(STRING));
+    }
+    BasicType::Error
+}
+
+// is Vec with > 1 arg meaningful?
+fn grok_vec_args(path: &Path) -> BasicType {
+    match &path.segments[path.segments.len() - 1].args {
+        None => BasicType::Error,
+        Some(args) => match &**args {
+            GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
+                AngleBracketedArg::Arg(arg) => match &arg {
+                    GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind) {
+                        BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
+                        BasicType::UserDef => BasicType::UserDefVec,
+                        _ => BasicType::Error,
+                    },
+                    _ => BasicType::Error,
+                },
+                _ => BasicType::Error,
+            },
+            _ => BasicType::Error,
+        },
+    }
+}
+
+fn get_basic_type(kind: &TyKind) -> BasicType {
+    match &kind {
+        TyKind::Array(_arr_type, _anon_const) => BasicType::Error,
+        TyKind::Ptr(_mut_ty) => BasicType::Error,
+        TyKind::Ref(_, mut_ty) => {
+            // use recursion to get to the underlying type
+            // :O very scary scary
+            get_basic_type(&mut_ty.ty.kind)
+        },
+        TyKind::Path(_, path) => {
+            if path.segments.len() == 0 {
+                panic!("Path has no type");
+            }
+            let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
+            let try_prim = check_prim(ty_string);
+            if try_prim != BasicType::Error {
+                return try_prim;
+            }
+            if ty_string == VEC {
+                return grok_vec_args(&path);
+            }
+            BasicType::Error
+        },
+        _ => BasicType::Error,
+    }
+}
+
+// struct-specific subroutines? place_holder_with_fields?
+
+impl<'a> DaikonImplInserterVisitor<'a> {
+    /*
+        Determine entry dtrace routines, grok return type.
+        return entry dtrace routines and something for the
+        return type so grok_fn_body knows what to do and
+        is only responsible for adding an extra let
+        binding and grokking the return expression to catch.
+    */
+    fn grok_fn_sig(&mut self, decl: &P<FnDecl>) {
+        let mut i = 0;
+        while i < decl.inputs.len() {
+            match &get_basic_type(&decl.inputs[i].ty.kind) {
+                BasicType::Prim(_which) => {}
+                BasicType::UserDef => {}
+                BasicType::PrimVec(_which) => {}
+                BasicType::UserDefVec => {}
+                BasicType::PrimArray(_which) => {}
+                BasicType::UserDefArray => {}
+                BasicType::Error => panic!("Formal arg type not handled."),
+            }
+            // take placeholders and substitute identifiers ->
+
+            i += 1;
+        }
+    }
+    fn grok_fn_body(&mut self, _body: &mut P<Block>) { // arg_dtraces: String,
+        // ret_dtrace_type: String?
+        // (or better yet, dtrace_call_with_ident_placeholder: String)
+    }
+}
+
+impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
+    /*
+        We should process the whole function at this point. It seems
+        like a bad idea to rely on some other component of the visitor
+        to grok the function body, since you have to manage other state
+        and keep track of which function you are currently processing,
+        which is challenging if the visitor visits functions and function
+        bodies in an illogical way.
+        Skip nested functions for now since they will be visited or have been visited,
+        but do recurse on all other kinds of nested blocks which will not be visited later
+        and are part of the function.
+    */
+    fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+        match &mut fk {
+            FnKind::Fn(_ctxt, _vis, f) => {
+                println!("{}\n\n", f.ident);
+                // get dtrace stuff to insert at function entry!
+                self.grok_fn_sig(&f.sig.decl);
+                match &mut f.body {
+                    None => {}
+                    Some(body) => {
+                        self.grok_fn_body(body);
+                    }
+                }
+            }
+            _ => {}
+        }
+        mut_visit::walk_fn(self, fk);
+    }
+
+    fn visit_item(&mut self, item: &mut Item) {
+        /*
+            TODO: match with structs, enums, and unions.
+                  Nested declarations will also be visited
+                  recursively, so don't worry about that here.
+        */
+
+        match &item.kind {
+            ItemKind::Enum(_ident, _generics, _enum_def) => {}
+            ItemKind::Struct(_ident, _generics, _variant_data) => {
+                println!("{}\n\n", _ident);
+            }
+            ItemKind::Union(_ident, _generics, _variant_data) => {}
+            _ => {}
+        }
+
+        mut_visit::walk_item(self, item);
+    }
+}
 
 impl<'a> Parser<'a> {
     /// Parses a source module as a crate. This is the main entry point for the parser.
@@ -248,9 +496,11 @@ impl<'a> Parser<'a> {
 
     // Convert String to items
     pub fn parse_items_from_string(&self, str: String) -> PResult<'a, ThinVec<P<Item>>> {
-        let tmp = new_parser_from_source_str(&self.psess,
-                                                 rustc_span::FileName::anon_source_code("no_use"),
-                                                 str);
+        let tmp = new_parser_from_source_str(
+            &self.psess,
+            rustc_span::FileName::anon_source_code("no_use"),
+            str,
+        );
         let mut tmp_parser = tmp.unwrap();
         let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
 
@@ -342,25 +592,28 @@ impl<'a> Parser<'a> {
             }
         }
 
-
         //== Daikon dtrace instrumentation passes ==//
 
         if do_visitor {
-
             // TODO: implement
             // add dtrace calls
-            let mut call_inserter = DaikonCallInserterVisitor { parser: &self };
-            mut_visit::visit_items(&mut call_inserter, &mut items);
+            let mut _call_inserter = DaikonCallInserterVisitor { parser: &self };
+            // mut_visit::visit_items(&mut call_inserter, &mut items);
 
             // TODO: implement
             // define struct-specific calls
             let mut items_to_append: ThinVec<P<_>> = ThinVec::new();
-            let mut impl_inserter = DaikonImplInserterVisitor { _parser: &self, _mod_items: &mut items_to_append };
+            let mut impl_inserter =
+                DaikonImplInserterVisitor { _parser: &self, _mod_items: &mut items_to_append };
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
             // TODO: implement
             // finally, append items_to_append + generic daikon library routines to the mod
-
+            let mut i = 0;
+            while i < items_to_append.len() {
+                items.push(items_to_append[i].clone());
+                i += 1;
+            }
         }
 
         let inject_use_span = post_attr_lo.data().with_hi(post_attr_lo.lo());
