@@ -1,10 +1,9 @@
 use std::fmt::Write;
 use std::mem;
 
-// use crate::parser::item::*;
 use rustc_ast::mut_visit::*;
 use rustc_ast::*;
-// use rustc_hir::*;
+use std::collections::HashMap;
 
 use ast::token::IdentIsRaw;
 // use rustc_ast::ast::*;
@@ -13,7 +12,7 @@ use rustc_ast::token::{self, Delimiter, InvisibleOrigin, MetaVarKind, TokenKind}
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
 use rustc_ast::util::case::Case;
 use rustc_ast::{self as ast};
-use rustc_ast_pretty::pprust;
+use rustc_ast_pretty::pprust; // pprust::item_to_string ??
 use rustc_errors::codes::*;
 use rustc_errors::{Applicability, PResult, StashKey, struct_span_code_err};
 use rustc_span::edit_distance::edit_distance;
@@ -31,197 +30,10 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
-/*
-   Visitor for inserting calls to dtrace routines
-   at ppt-enter and ppt-exit(s)
-*/
-struct DaikonCallInserterVisitor<'a> {
-    // For parsing String fragments
-    pub parser: &'a Parser<'a>,
-    // For repeating dtrace calls at exits  (probably should be careful of renaming and drops..., some or all of which should be nonsensical)
-    // pub Stack of String of dtrace calls you have inserted at the beginning of the current function
-
-    // To know what dtrace routine to add at exits
-    // pub Stack of ret_ty
-}
-
-impl<'a> MutVisitor for DaikonCallInserterVisitor<'a> {
-    fn visit_block(&mut self, block: &mut Block) {
-        println!("now visiting\n{:?}\n\n", block);
-
-        ast::mut_visit::walk_block(self, block);
-
-        println!("done visiting\n{:?}\n\n", block);
-    }
-
-    fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
-        match &mut fk {
-            FnKind::Fn(_ctxt, _vis, f) => match &mut f.body {
-                None => {}
-                Some(_body) => {
-                    // push f
-                    println!("now visiting\n{}\n\n", f.ident);
-
-                    // Print parameter names and types.
-                    let mut param_idents = Vec::new();
-                    let mut type_idents = Vec::new();
-                    let mut i = 0;
-                    while i < f.sig.decl.inputs.len() {
-                        match &f.sig.decl.inputs[i].pat.kind {
-                            PatKind::Ident(_mode, ident, None) => {
-                                print!("{}: ", ident);
-                                param_idents.push(ident.clone());
-                            }
-                            _ => {
-                                println!("what param is this?");
-                            }
-                        }
-
-                        match &f.sig.decl.inputs[i].ty.kind {
-                            //== Notes ==//
-                            // Types can be complex. Need a better way to match against
-                            // things we want to deal with.
-                            // For enums and unions, implement a dummy version of dtrace stuff,
-                            // (both enums and unions are allowed impl blocks), noops which don't
-                            // do anything when they are called.
-
-                            // Do I care about lifetime specifiers? Maybe at exit if it has "died".
-                            // Otherwise can't think of anything.
-
-                            // Test to see where they are stored in Path.
-
-                            // Next process generics, mainly for Vec.
-                            TyKind::Path(None, path) => {
-                                if path.segments.len() == 0 {
-                                    panic!("What type is this?");
-                                }
-
-                                type_idents
-                                    .push(path.segments[path.segments.len() - 1].ident.clone());
-
-                                if path.segments[path.segments.len() - 1].ident.as_str() == "Vec" {
-                                    print!("{}", path.segments[path.segments.len() - 1].ident);
-
-                                    // Check generic Args
-                                    match &path.segments[path.segments.len() - 1].args {
-                                        None => {}
-                                        Some(args) => match &**args {
-                                            GenericArgs::AngleBracketed(brack_args) => {
-                                                match &brack_args.args[0] {
-                                                    AngleBracketedArg::Arg(arg) => match &arg {
-                                                        GenericArg::Type(ty) => match &ty.kind {
-                                                            TyKind::Path(None, path) => {
-                                                                if path.segments.len() == 0 {
-                                                                    panic!(
-                                                                        "What is this generic arg type?"
-                                                                    );
-                                                                }
-
-                                                                println!(
-                                                                    "<{}>",
-                                                                    path.segments
-                                                                        [path.segments.len() - 1]
-                                                                        .ident
-                                                                );
-                                                            }
-                                                            TyKind::Ref(None, _mut_ty) => {}
-                                                            TyKind::Ref(
-                                                                Some(_lifetime),
-                                                                _mut_ty,
-                                                            ) => {}
-                                                            _ => {}
-                                                        },
-                                                        _ => {}
-                                                    },
-                                                    _ => {}
-                                                }
-                                            }
-                                            _ => {}
-                                        },
-                                    }
-                                } else {
-                                    // generic args aren't important?
-                                    println!("{}", path.segments[path.segments.len() - 1].ident);
-                                }
-                            }
-                            TyKind::Ref(None, mut_ty) => match &mut_ty.ty.kind {
-                                TyKind::Path(None, path) => {
-                                    if path.segments.len() == 0 {
-                                        panic!("What ref type is this?");
-                                    }
-                                    println!("&{}", path.segments[path.segments.len() - 1].ident);
-                                    type_idents
-                                        .push(path.segments[path.segments.len() - 1].ident.clone());
-                                }
-                                TyKind::Ref(_, _second_mut_ty) => {
-                                    println!(
-                                        "This is >= double ref with no lifetime for first ref."
-                                    )
-                                }
-                                _ => {
-                                    println!("&<something> -- e.g., Array, Ptr, ...");
-                                }
-                            },
-                            TyKind::Ref(Some(_lifetime), mut_ty) => match &mut_ty.ty.kind {
-                                TyKind::Path(None, path) => {
-                                    if path.segments.len() == 0 {
-                                        panic!("What ref + lifetime type is this?");
-                                    }
-                                    println!(
-                                        "&'? {}",
-                                        path.segments[path.segments.len() - 1].ident
-                                    );
-                                    type_idents
-                                        .push(path.segments[path.segments.len() - 1].ident.clone());
-                                }
-                                TyKind::Ref(_, _second_mut_ty) => {
-                                    println!(
-                                        "This is >= double ref with a lifetime specifier for first ref."
-                                    )
-                                }
-                                _ => {
-                                    println!("&'? <something> -- e.g., Array, Ptr, ...");
-                                }
-                            },
-                            _ => {
-                                println!(
-                                    "what type is this? (not Path or Ref) -- e.g., Array, Ptr, ..."
-                                );
-                            }
-                        }
-
-                        i += 1;
-                    }
-
-                    // if you substitute identifiers in Strings before parsing, parsed items will never need to be mut.
-                    let items = self.parser.parse_items_from_string(String::from(
-                        "fn main() { println!(\"hello, world\"); }",
-                    ));
-                    match &items {
-                        Err(_why) => panic!("couldn't parse internal string"),
-                        Ok(items) => match &items[0].kind {
-                            ItemKind::Fn(fun) => match &fun.body {
-                                None => {}
-                                Some(_bd) => {
-                                    // body.stmts.insert(0, bd.stmts[0].clone());
-                                }
-                            },
-                            _ => {}
-                        },
-                    }
-
-                    let id = f.ident.clone();
-                    ast::mut_visit::walk_fn(self, fk);
-                    // pop f
-                    println!("done visiting\n{}\n\n", id);
-                    return;
-                }
-            },
-            FnKind::Closure(_binder, _coroutine_kind, _decl, _expr) => {}
-        }
-        ast::mut_visit::walk_fn(self, fk);
-    }
-}
+// placeholders are between the strs
+#[allow(dead_code)]
+static DTRACE_ENTRY: [&str; 3] = ["dtrace_entry(\"", ":::ENTER\", *", "_COUNTER.lock().unwrap());"]; // don't forget to uppercase second gap
+static DTRACE_PRIM: [&str; 4] = ["dtrace_print_prim::<", ">(", ", String::from(\"","\"));"];
 
 /*
    Visitor for defining struct-specific routines
@@ -251,7 +63,6 @@ enum BasicType {
     Error,
 }
 
-#[allow(dead_code)]
 fn get_param_ident(pat: &P<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
@@ -388,21 +199,45 @@ fn get_basic_type(kind: &TyKind) -> BasicType {
     }
 }
 
+#[allow(rustc::default_hash_types)]
+fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
+    let mut res = HashMap::new();
+    let mut i = 0;
+    while i < decl.inputs.len() {
+        res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
+        i += 1;
+    }
+    res
+}
+
 // struct-specific subroutines? place_holder_with_fields?
 
 impl<'a> DaikonImplInserterVisitor<'a> {
-    /*
+    /* WIP
         Determine entry dtrace routines, grok return type.
         return entry dtrace routines and something for the
         return type so grok_fn_body knows what to do and
         is only responsible for adding an extra let
         binding and grokking the return expression to catch.
     */
-    fn grok_fn_sig(&mut self, decl: &P<FnDecl>) {
+    fn grok_fn_sig(&mut self, decl: &P<FnDecl>) -> Vec<String> {
+
+        // grok params
         let mut i = 0;
+        let mut dtrace_param_blocks: Vec<String> = Vec::new();
         while i < decl.inputs.len() {
+
+            let mut dtrace_rec = String::from("");
             match &get_basic_type(&decl.inputs[i].ty.kind) {
-                BasicType::Prim(_which) => {}
+                BasicType::Prim(which) => {
+                    dtrace_rec.push_str(DTRACE_PRIM[0]); // dtrace_entry::<
+                    dtrace_rec.push_str(which); // type
+                    dtrace_rec.push_str(DTRACE_PRIM[1]); // >(arg1, ...
+                    dtrace_rec.push_str(&get_param_ident(&decl.inputs[i].pat)); // primitive arg
+                    dtrace_rec.push_str(DTRACE_PRIM[2]);
+                    dtrace_rec.push_str(&get_param_ident(&decl.inputs[i].pat));
+                    dtrace_rec.push_str(DTRACE_PRIM[3]);
+                }
                 BasicType::UserDef => {}
                 BasicType::PrimVec(_which) => {}
                 BasicType::UserDefVec => {}
@@ -410,15 +245,26 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                 BasicType::UserDefArray => {}
                 BasicType::Error => panic!("Formal arg type not handled."),
             }
-            // take placeholders and substitute identifiers ->
+            dtrace_rec.push_str("\n");
 
+            dtrace_param_blocks.push(format!("{}{}", dtrace_rec, "\n"));
             i += 1;
         }
+
+        // return param-dependent dtrace calls
+        dtrace_param_blocks
     }
-    fn grok_fn_body(&mut self, _body: &mut P<Block>) { // arg_dtraces: String,
-        // ret_dtrace_type: String?
-        // (or better yet, dtrace_call_with_ident_placeholder: String)
-    }
+
+    #[allow(rustc::default_hash_types)]
+    fn grok_fn_body(&mut self,
+                    _body: &mut P<Block>,
+                    _dtrace_param_blocks: &mut Vec<String>,
+                    _param_to_block_idx: HashMap<String, i32>) { // arg_dtraces: String,
+        // decide how to loop over the body while inserting some stmts along the way.
+        // Mutable idx, etc. Probably the main way.
+    } // fact?: if you have a non Semi expr and it is not the final statement, it cannot be a return value
+      // it may be intended to be a return value but the program is not well-formed and does not (?) compile.
+      // if it does compile, that's probably messed up (?) and you shouldn't worry about handling it.
 }
 
 impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
@@ -437,12 +283,18 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => {
                 println!("{}\n\n", f.ident);
-                // get dtrace stuff to insert at function entry!
-                self.grok_fn_sig(&f.sig.decl);
+                // get block of dtrace chunks -- one for each param
+                let mut dtrace_param_blocks = self.grok_fn_sig(&f.sig.decl);
+                let param_to_block_idx = map_params(&f.sig.decl);
                 match &mut f.body {
                     None => {}
                     Some(body) => {
-                        self.grok_fn_body(body);
+                        // add a dtrace_entry record in grok_fn_body, and
+                        // make sure to separately pass in the calls generated
+                        // by grok_fn_sig
+                        self.grok_fn_body(body,
+                                          &mut dtrace_param_blocks,
+                                          param_to_block_idx);
                     }
                 }
             }
@@ -595,25 +447,23 @@ impl<'a> Parser<'a> {
         //== Daikon dtrace instrumentation passes ==//
 
         if do_visitor {
-            // TODO: implement
-            // add dtrace calls
-            let mut _call_inserter = DaikonCallInserterVisitor { parser: &self };
-            // mut_visit::visit_items(&mut call_inserter, &mut items);
 
             // TODO: implement
-            // define struct-specific calls
+            // do all mutation things
             let mut items_to_append: ThinVec<P<_>> = ThinVec::new();
             let mut impl_inserter =
                 DaikonImplInserterVisitor { _parser: &self, _mod_items: &mut items_to_append };
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
-            // TODO: implement
-            // finally, append items_to_append + generic daikon library routines to the mod
             let mut i = 0;
             while i < items_to_append.len() {
                 items.push(items_to_append[i].clone());
                 i += 1;
             }
+
+            // TODO: implement
+            // push daikon library and items_to_append to items.
+
         }
 
         let inject_use_span = post_attr_lo.data().with_hi(post_attr_lo.lo());
