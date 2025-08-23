@@ -4,6 +4,15 @@ use std::mem;
 use rustc_ast::mut_visit::*;
 use rustc_ast::*;
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use crate::unwrap_or_emit_fatal;
+use crate::parser::daikon_strs::{
+    I8, I16, I32, I64, I128, ISIZE,
+    U8, U16, U32, U64, U128, USIZE,
+    F32, F64, CHAR, BOOL, UNIT, STR,
+    STRING, VEC, build_entry, build_prim,
+    build_userdef
+};
 
 use ast::token::IdentIsRaw;
 // use rustc_ast::ast::*;
@@ -30,17 +39,14 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
-// placeholders are between the strs
-#[allow(dead_code)]
-static DTRACE_ENTRY: [&str; 3] = ["dtrace_entry(\"", ":::ENTER\", *", "_COUNTER.lock().unwrap());"]; // don't forget to uppercase second gap
-static DTRACE_PRIM: [&str; 4] = ["dtrace_print_prim::<", ">(", ", String::from(\"","\"));"];
+static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
 /*
    Visitor for defining struct-specific routines
 */
 struct DaikonImplInserterVisitor<'a> {
     // For parsing string fragments
-    pub _parser: &'a Parser<'a>,
+    pub parser: &'a Parser<'a>,
 
     // For appending impl blocks to the file (tested, works to push to items in parse_mod)
     pub _mod_items: &'a mut ThinVec<P<Item>>,
@@ -69,44 +75,6 @@ fn get_param_ident(pat: &P<Pat>) -> String {
         _ => panic!("Formal arg does not have simple identifier"),
     }
 }
-
-// Proper primitive types
-// i8, i16, i32, i64, i128 and isize
-// u8, u16, u32, u64, u128 and usize
-// f32, f64
-// char
-// bool
-// () -- why is this possible for parameters :/
-
-// Other types for Daikon to munch
-// str
-// String
-// Vec
-// more to come?
-
-static I8: &str = "i8";
-static I16: &str = "i16";
-static I32: &str = "i32";
-static I64: &str = "i64";
-static I128: &str = "i128";
-static ISIZE: &str = "isize";
-
-static U8: &str = "u8";
-static U16: &str = "u16";
-static U32: &str = "u32";
-static U64: &str = "u64";
-static U128: &str = "u128";
-static USIZE: &str = "usize";
-
-static F32: &str = "f32";
-static F64: &str = "f64";
-
-static CHAR: &str = "char";
-static BOOL: &str = "bool";
-static UNIT: &str = "()";
-static STR: &str = "str";
-static STRING: &str = "String";
-static VEC: &str = "Vec";
 
 fn check_prim(ty_str: &str) -> BasicType {
     if ty_str == I8 {
@@ -193,7 +161,7 @@ fn get_basic_type(kind: &TyKind) -> BasicType {
             if ty_string == VEC {
                 return grok_vec_args(&path);
             }
-            BasicType::Error
+            BasicType::UserDef
         },
         _ => BasicType::Error,
     }
@@ -213,6 +181,29 @@ fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
 // struct-specific subroutines? place_holder_with_fields?
 
 impl<'a> DaikonImplInserterVisitor<'a> {
+    fn insert_into_block(&self, loc: usize, stuff: String, block: &mut P<Block>) -> usize {
+        let mut i = loc;
+        let items = self.parser.parse_items_from_string(stuff.to_owned());
+        match &items {
+            Err(_why) => panic!("Internal String parsing failed"),
+            Ok(items) => {
+                match &items[0].kind {
+                    ItemKind::Fn(wrapper) => match &wrapper.body {
+                        None => panic!("No body to insert"),
+                        Some(body) => {
+                            for stmt in body.stmts.clone() {
+                                block.stmts.insert(i, stmt.clone());
+                                i += 1;
+                            }
+                        }
+                    }
+                    _ => panic!("Internal Daikon str is malformed")
+                }
+            }
+        }
+        i
+    }
+
     /* WIP
         Determine entry dtrace routines, grok return type.
         return entry dtrace routines and something for the
@@ -227,24 +218,20 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
         while i < decl.inputs.len() {
 
-            let mut dtrace_rec = String::from("");
-            match &get_basic_type(&decl.inputs[i].ty.kind) {
-                BasicType::Prim(which) => {
-                    dtrace_rec.push_str(DTRACE_PRIM[0]); // dtrace_entry::<
-                    dtrace_rec.push_str(which); // type
-                    dtrace_rec.push_str(DTRACE_PRIM[1]); // >(arg1, ...
-                    dtrace_rec.push_str(&get_param_ident(&decl.inputs[i].pat)); // primitive arg
-                    dtrace_rec.push_str(DTRACE_PRIM[2]);
-                    dtrace_rec.push_str(&get_param_ident(&decl.inputs[i].pat));
-                    dtrace_rec.push_str(DTRACE_PRIM[3]);
-                }
-                BasicType::UserDef => {}
-                BasicType::PrimVec(_which) => {}
-                BasicType::UserDefVec => {}
-                BasicType::PrimArray(_which) => {}
-                BasicType::UserDefArray => {}
-                BasicType::Error => panic!("Formal arg type not handled."),
-            }
+            let mut dtrace_rec =
+                match &get_basic_type(&decl.inputs[i].ty.kind) {
+                    BasicType::Prim(p_type) => {
+                        build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                    }
+                    BasicType::UserDef => {
+                        build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
+                    }
+                    BasicType::PrimVec(_which) => { String::from("") }
+                    BasicType::UserDefVec => { String::from("") }
+                    BasicType::PrimArray(_which) => { String::from("") }
+                    BasicType::UserDefArray => { String::from("") }
+                    BasicType::Error => panic!("Formal arg type not handled."),
+                };
             dtrace_rec.push_str("\n");
 
             dtrace_param_blocks.push(format!("{}{}", dtrace_rec, "\n"));
@@ -255,13 +242,27 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         dtrace_param_blocks
     }
 
+    // this code being messed up is independent from the dtrace_param_blocks being messed up.
+    // Make sure you know what's broken
     #[allow(rustc::default_hash_types)]
     fn grok_fn_body(&mut self,
-                    _body: &mut P<Block>,
-                    _dtrace_param_blocks: &mut Vec<String>,
+                    ppt_name: String,
+                    body: &mut P<Block>,
+                    dtrace_param_blocks: &mut Vec<String>,
                     _param_to_block_idx: HashMap<String, i32>) { // arg_dtraces: String,
-        // decide how to loop over the body while inserting some stmts along the way.
-        // Mutable idx, etc. Probably the main way.
+        let mut i = 0;
+        let entry = build_entry(ppt_name.clone());
+        i = self.insert_into_block(i, entry, body);
+        for param_block in dtrace_param_blocks {
+            // :0 very scary scary
+            i = self.insert_into_block(i, param_block.clone(), body);
+        }
+
+        // look for returns and nested blocks (recurse in those cases)
+        // while i < body.stmts.len() {
+
+        // }
+
     } // fact?: if you have a non Semi expr and it is not the final statement, it cannot be a return value
       // it may be intended to be a return value but the program is not well-formed and does not (?) compile.
       // if it does compile, that's probably messed up (?) and you shouldn't worry about handling it.
@@ -282,17 +283,18 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => {
-                println!("{}\n\n", f.ident);
+                // println!("{}\n\n", f.ident);
                 // get block of dtrace chunks -- one for each param
                 let mut dtrace_param_blocks = self.grok_fn_sig(&f.sig.decl);
                 let param_to_block_idx = map_params(&f.sig.decl);
                 match &mut f.body {
-                    None => {}
+                    None => {} // add all trace records up front
                     Some(body) => {
                         // add a dtrace_entry record in grok_fn_body, and
                         // make sure to separately pass in the calls generated
                         // by grok_fn_sig
-                        self.grok_fn_body(body,
+                        self.grok_fn_body(String::from(f.ident.as_str()),
+                                          body,
                                           &mut dtrace_param_blocks,
                                           param_to_block_idx);
                     }
@@ -348,12 +350,20 @@ impl<'a> Parser<'a> {
 
     // Convert String to items
     pub fn parse_items_from_string(&self, str: String) -> PResult<'a, ThinVec<P<Item>>> {
-        let tmp = new_parser_from_source_str(
+        let count = *PARSER_COUNTER.lock().unwrap();
+        let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
-            rustc_span::FileName::anon_source_code("no_use"),
+            rustc_span::FileName::anon_source_code(&format!("{}{}",
+                                                            "parser",
+                                                            count.to_string())),
+                                                            // please make file name unique to each call!
+                                                            // otherwise source file map will return something u
+                                                            // already used.
             str,
-        );
-        let mut tmp_parser = tmp.unwrap();
+        ));
+
+        *PARSER_COUNTER.lock().unwrap() += 1;
+
         let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
 
         // Parse from str
@@ -452,7 +462,7 @@ impl<'a> Parser<'a> {
             // do all mutation things
             let mut items_to_append: ThinVec<P<_>> = ThinVec::new();
             let mut impl_inserter =
-                DaikonImplInserterVisitor { _parser: &self, _mod_items: &mut items_to_append };
+                DaikonImplInserterVisitor { parser: &self, _mod_items: &mut items_to_append };
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
             let mut i = 0;
@@ -463,6 +473,12 @@ impl<'a> Parser<'a> {
 
             // TODO: implement
             // push daikon library and items_to_append to items.
+
+            let mut i = 0;
+            while i < items.len() {
+                println!("{}", pprust::item_to_string(&items[i]));
+                i += 1;
+            }
 
         }
 

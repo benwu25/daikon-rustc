@@ -11,6 +11,8 @@ mod stmt;
 pub mod token_type;
 mod ty;
 
+mod daikon_strs;
+
 // Parsers for non-functionlike builtin macros are defined in rustc_parse so they can be used by
 // both rustc_builtin_macros and rustfmt.
 pub mod asm;
