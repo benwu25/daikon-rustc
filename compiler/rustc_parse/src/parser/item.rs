@@ -11,7 +11,8 @@ use crate::parser::daikon_strs::{
     U8, U16, U32, U64, U128, USIZE,
     F32, F64, CHAR, BOOL, UNIT, STR,
     STRING, VEC, build_entry, build_prim,
-    build_userdef
+    build_userdef, build_exit, build_let_ret,
+    build_inc, build_ret
 };
 
 use ast::token::IdentIsRaw;
@@ -66,6 +67,7 @@ enum BasicType {
     UserDefVec,
     PrimArray(String),
     UserDefArray,
+    NoRet,
     Error,
 }
 
@@ -183,7 +185,7 @@ fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
 impl<'a> DaikonImplInserterVisitor<'a> {
     fn insert_into_block(&self, loc: usize, stuff: String, block: &mut P<Block>) -> usize {
         let mut i = loc;
-        let items = self.parser.parse_items_from_string(stuff.to_owned());
+        let items = self.parser.parse_items_from_string(stuff.clone());
         match &items {
             Err(_why) => panic!("Internal String parsing failed"),
             Ok(items) => {
@@ -200,6 +202,149 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     _ => panic!("Internal Daikon str is malformed")
                 }
             }
+        }
+        i
+    }
+
+    // grok body.stmts[i]
+    #[allow(rustc::default_hash_types)]
+    fn grok_stmt(&mut self,
+                 loc: usize,
+                 body: &mut P<Block>,
+                 exit_counter: &mut usize,
+                 ppt_name: String,
+                 dtrace_param_blocks: &mut Vec<String>,
+                 param_to_block_idx: &HashMap<String, i32>,
+                 ret_ty: &BasicType) -> usize {
+        let mut i = loc;
+        let stmt = body.stmts[i].clone();
+        println!("{}\n\n", pprust::stmt_to_string(&stmt));
+        match &mut body.stmts[i].kind {
+            StmtKind::Let(_local) => { return i+1; }
+            StmtKind::Item(_item) => { return i+1; }
+            StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
+                ExprKind::Block(block, _) => {
+                    self.grok_block(ppt_name.clone(),
+                                    block,
+                                    dtrace_param_blocks,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                }
+                ExprKind::If(_, if_block, None) => { // no else
+                    // recurse on nested block,
+                    // but we still only grokked one (block) stmt, so just
+                    // move to the next one
+                    self.grok_block(ppt_name.clone(),
+                                    if_block,
+                                    dtrace_param_blocks,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                }
+                ExprKind::If(_, if_block, Some(expr)) => match &mut expr.kind {
+                    // will need to recurse for if-else branches, probably want grok_if_stmt and other grok_*_stmt to call if needed
+                    ExprKind::Block(block, _) => {
+                        self.grok_block(ppt_name.clone(),
+                                        if_block,
+                                        dtrace_param_blocks,
+                                        &param_to_block_idx,
+                                        &ret_ty,
+                                        exit_counter);
+
+                        self.grok_block(ppt_name.clone(),
+                                        block,
+                                        dtrace_param_blocks,
+                                        &param_to_block_idx,
+                                        &ret_ty,
+                                        exit_counter);
+                        return i+1;
+                    }
+                    _ => { return i+1; }
+                }
+                ExprKind::While(_, _while_block, _) => {
+                    // Likewise
+                    return i+1;
+                }
+                ExprKind::ForLoop { pat: _, iter: _, body: _, label: _, kind: _ } => {
+                    // Likewise
+                    return i+1;
+                }
+                ExprKind::Loop(_loop_block, _, _) => {
+                    // Likewise
+                    return i+1;
+                }
+                _ => {} // ConstBlock? etc., other nested blocks
+            }
+            _ => {}
+        }
+        match &stmt.kind {
+            StmtKind::Semi(semi) => match &semi.kind {
+                ExprKind::Ret(None) => {
+                    let exit = build_exit(ppt_name.clone(), *exit_counter);
+                    *exit_counter += 1;
+                    i = self.insert_into_block(i, exit.clone(), body);
+                    for param_block in &mut *dtrace_param_blocks {
+                        // :0 very scary scary
+                        i = self.insert_into_block(i, param_block.clone(), body);
+                    }
+
+                    let inc = build_inc(ppt_name.clone());
+                    i = self.insert_into_block(i, inc, body);
+
+                    // did you put return; in the right place?
+                }
+                ExprKind::Ret(Some(return_expr)) => {
+                    let exit = build_exit(ppt_name.clone(), *exit_counter);
+                    *exit_counter += 1;
+
+                    i = self.insert_into_block(i, exit.clone(), body);
+
+                    for param_block in &mut *dtrace_param_blocks {
+                        // :0 very scary scary
+                        i = self.insert_into_block(i, param_block.clone(), body);
+                    }
+
+                    // Process return expr
+                    let expr = pprust::expr_to_string(&return_expr);
+                    let ret_let = build_let_ret(expr.clone());
+                    i = self.insert_into_block(i, ret_let, body);
+
+                    match &ret_ty {
+                        BasicType::Prim(p_type) => {
+                            let prim_record_ret = build_prim(p_type.clone(), String::from("ret"));
+                            i = self.insert_into_block(i, prim_record_ret, body);
+                        }
+                        BasicType::UserDef => {
+                            let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
+                            i = self.insert_into_block(i, userdef_record_ret, body);
+                        }
+                        BasicType::PrimVec(_p_type) => {}
+                        BasicType::UserDefVec => {}
+                        BasicType::PrimArray(_p_type) => {},
+                        BasicType::UserDefArray => {}
+                        BasicType::NoRet => {},
+                        BasicType::Error => panic!("ret_ty is BasicType::Error")
+                    }
+
+                    let inc = build_inc(ppt_name.clone());
+                    i = self.insert_into_block(i, inc, body);
+                    let ret = build_ret();
+                    i = self.insert_into_block(i, ret, body);
+
+                    // remove old return stmt
+                    body.stmts.remove(i); // will want to println! this to debug
+
+                    // store (ok), log (ok), inc nonce counter (ok), and return (ok)
+                }
+                ExprKind::Call(_call, _params) => { return i+1; } // Maybe check for drop and other invalidations
+                _ => { return i+1; } // other things you overlooked
+            }
+            StmtKind::Empty => { return i+1; }
+            StmtKind::MacCall(_mac_call) => { return i+1; }
+            _ => {}
         }
         i
     }
@@ -230,6 +375,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     BasicType::UserDefVec => { String::from("") }
                     BasicType::PrimArray(_which) => { String::from("") }
                     BasicType::UserDefArray => { String::from("") }
+                    BasicType::NoRet => { String::from("") }
                     BasicType::Error => panic!("Formal arg type not handled."),
                 };
             dtrace_rec.push_str("\n");
@@ -242,6 +388,36 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         dtrace_param_blocks
     }
 
+    #[allow(rustc::default_hash_types)]
+    fn grok_block(&mut self,
+                  ppt_name: String,
+                  body: &mut P<Block>,
+                  dtrace_param_blocks: &mut Vec<String>,
+                  param_to_block_idx: &HashMap<String, i32>,
+                  ret_ty: &BasicType,
+                  exit_counter: &mut usize) {
+        let mut i = 0;
+
+        // assuming no unreachable statements.
+        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(i,
+                               body,
+                               exit_counter,
+                               ppt_name.clone(),
+                               dtrace_param_blocks,
+                               &param_to_block_idx,
+                               &ret_ty) // match on Semi mainly for now, find return <expr>; and add an exit point.
+        }
+    }
+
+    // is it a good idea to store which params are valid at each exit
+    // ppt for the decls pass which happens after this?
+    // then the decls pass just needs to
+    // 1: visit_item to build HashMap<ident, StructNode>
+    // 2: visit_fn, grok sig, and grok exit ppts using structural
+    //    recursion on StructNodes for nesting. Need to use depth counter
+    //    for a base case.
+
     // this code being messed up is independent from the dtrace_param_blocks being messed up.
     // Make sure you know what's broken
     #[allow(rustc::default_hash_types)]
@@ -249,19 +425,35 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     ppt_name: String,
                     body: &mut P<Block>,
                     dtrace_param_blocks: &mut Vec<String>,
-                    _param_to_block_idx: HashMap<String, i32>) { // arg_dtraces: String,
+                    param_to_block_idx: HashMap<String, i32>,
+                    ret_ty: &BasicType) { // arg_dtraces: String,
+        let original_len = body.stmts.len();
         let mut i = 0;
         let entry = build_entry(ppt_name.clone());
         i = self.insert_into_block(i, entry, body);
-        for param_block in dtrace_param_blocks {
+        for param_block in &mut *dtrace_param_blocks {
             // :0 very scary scary
             i = self.insert_into_block(i, param_block.clone(), body);
         }
 
         // look for returns and nested blocks (recurse in those cases)
-        // while i < body.stmts.len() {
+        let mut exit_counter = 1;
 
-        // }
+        // assuming no unreachable statements.
+        while i < body.stmts.len()-1 { // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(i,
+                               body,
+                               &mut exit_counter,
+                               ppt_name.clone(),
+                               dtrace_param_blocks,
+                               &param_to_block_idx,
+                               &ret_ty) // match on Semi mainly for now, find return <expr>; and add an exit point.
+        }
+
+        // grok final stmt
+        if original_len > 0 {
+
+        }
 
     } // fact?: if you have a non Semi expr and it is not the final statement, it cannot be a return value
       // it may be intended to be a return value but the program is not well-formed and does not (?) compile.
@@ -287,6 +479,10 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                 // get block of dtrace chunks -- one for each param
                 let mut dtrace_param_blocks = self.grok_fn_sig(&f.sig.decl);
                 let param_to_block_idx = map_params(&f.sig.decl);
+                let ret_ty = match &f.sig.decl.output {
+                    FnRetTy::Default(_span) => BasicType::NoRet,
+                    FnRetTy::Ty(ty) => get_basic_type(&ty.kind)
+                };
                 match &mut f.body {
                     None => {} // add all trace records up front
                     Some(body) => {
@@ -296,7 +492,8 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                         self.grok_fn_body(String::from(f.ident.as_str()),
                                           body,
                                           &mut dtrace_param_blocks,
-                                          param_to_block_idx);
+                                          param_to_block_idx,
+                                          &ret_ty);
                     }
                 }
             }

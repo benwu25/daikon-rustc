@@ -49,6 +49,30 @@ pub(crate) fn build_entry(ppt_name: String) -> String {
     res
 }
 
+pub(crate) static DTRACE_EXIT: [&str; 4] = ["fn main() { dtrace_exit(\"",
+                                           ":::EXIT",
+                                           "\", *",
+                                           "_COUNTER.lock().unwrap()); }"];
+pub(crate) fn build_exit(ppt_name: String, exit_counter: usize) -> String {
+    let mut res = String::from(DTRACE_EXIT[0]);
+    res.push_str(&ppt_name);
+    res.push_str(DTRACE_EXIT[1]);
+    res.push_str(&exit_counter.to_string());
+    res.push_str(DTRACE_EXIT[2]);
+    res.push_str(&ppt_name.to_uppercase());
+    res.push_str(DTRACE_EXIT[3]);
+    res
+}
+
+pub(crate) static INC: [&str; 2] = ["fn main() { *",
+                                    "_COUNTER.lock().unwrap() += 1; }"];
+pub(crate) fn build_inc(ppt_name: String) -> String {
+    let mut res = String::from(INC[0]);
+    res.push_str(&ppt_name);
+    res.push_str(INC[1]);
+    res
+}
+
 pub(crate) static DTRACE_PRIM: [&str; 4] = ["fn main() { dtrace_print_prim::<",
                                             ">(",
                                             ", String::from(\"",
@@ -85,7 +109,16 @@ pub(crate) fn build_userdef(var_name: String, depth_arg: i32) -> String {
     res
 }
 
-/*
-dtrace_print_pointer(a as *const _ as usize, String::from("a"));
-a.dtrace_print_fields(3, String::from("a"));
-*/
+pub(crate) static LET_RET: [&str; 2] = ["fn main() { let ret = ",
+                                        "; }"];
+pub(crate) fn build_let_ret(expr: String) -> String {
+    let mut res = String::from(LET_RET[0]);
+    res.push_str(&expr);
+    res.push_str(LET_RET[1]);
+    res
+}
+
+pub(crate) static RET: [&str; 1] = ["fn main() { return ret; }"];
+pub(crate) fn build_ret() -> String {
+    String::from(RET[0])
+}
