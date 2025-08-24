@@ -206,6 +206,49 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         i
     }
 
+    #[allow(rustc::default_hash_types)]
+    fn grok_expr_for_if(&mut self,
+                        expr: &mut P<Expr>,
+                        exit_counter: &mut usize,
+                        ppt_name: String,
+                        dtrace_param_blocks: &mut Vec<String>,
+                        param_to_block_idx: &HashMap<String, i32>,
+                        ret_ty: &BasicType) {
+        match &mut expr.kind {
+            ExprKind::Block(block, _) => {
+                self.grok_block(ppt_name.clone(),
+                                block,
+                                dtrace_param_blocks,
+                                &param_to_block_idx,
+                                &ret_ty,
+                                exit_counter);
+            }
+            ExprKind::If(_, if_block, None) => {
+                self.grok_block(ppt_name.clone(),
+                                if_block,
+                                dtrace_param_blocks,
+                                &param_to_block_idx,
+                                &ret_ty,
+                                exit_counter);
+            }
+            ExprKind::If(_, if_block, Some(another_expr)) => {
+                self.grok_block(ppt_name.clone(),
+                                if_block,
+                                dtrace_param_blocks,
+                                &param_to_block_idx,
+                                &ret_ty,
+                                exit_counter);
+                self.grok_expr_for_if(another_expr,
+                                      exit_counter,
+                                      ppt_name.clone(),
+                                      dtrace_param_blocks,
+                                      &param_to_block_idx,
+                                      &ret_ty);
+            }
+            _ => panic!("Internal error handling if stmt with else!")
+        }
+    }
+
     // grok body.stmts[i]
     #[allow(rustc::default_hash_types)]
     fn grok_stmt(&mut self,
@@ -223,6 +266,10 @@ impl<'a> DaikonImplInserterVisitor<'a> {
             StmtKind::Let(_local) => { return i+1; }
             StmtKind::Item(_item) => { return i+1; }
             StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
+                // Blocks.
+                // recurse on nested block,
+                // but we still only grokked one (block) stmt, so just
+                // move to the next stmt (return i+1)
                 ExprKind::Block(block, _) => {
                     self.grok_block(ppt_name.clone(),
                                     block,
@@ -233,9 +280,6 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     return i+1;
                 }
                 ExprKind::If(_, if_block, None) => { // no else
-                    // recurse on nested block,
-                    // but we still only grokked one (block) stmt, so just
-                    // move to the next one
                     self.grok_block(ppt_name.clone(),
                                     if_block,
                                     dtrace_param_blocks,
@@ -244,36 +288,47 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     exit_counter);
                     return i+1;
                 }
-                ExprKind::If(_, if_block, Some(expr)) => match &mut expr.kind {
-                    // will need to recurse for if-else branches, probably want grok_if_stmt and other grok_*_stmt to call if needed
-                    ExprKind::Block(block, _) => {
-                        self.grok_block(ppt_name.clone(),
-                                        if_block,
-                                        dtrace_param_blocks,
-                                        &param_to_block_idx,
-                                        &ret_ty,
-                                        exit_counter);
+                ExprKind::If(_, if_block, Some(expr)) => { // yes else
+                    self.grok_block(ppt_name.clone(),
+                                    if_block,
+                                    dtrace_param_blocks,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
 
-                        self.grok_block(ppt_name.clone(),
-                                        block,
-                                        dtrace_param_blocks,
-                                        &param_to_block_idx,
-                                        &ret_ty,
-                                        exit_counter);
-                        return i+1;
-                    }
-                    _ => { return i+1; }
-                }
-                ExprKind::While(_, _while_block, _) => {
-                    // Likewise
+                    self.grok_expr_for_if(expr,
+                                          exit_counter,
+                                          ppt_name.clone(),
+                                          dtrace_param_blocks,
+                                          &param_to_block_idx,
+                                          &ret_ty);
                     return i+1;
                 }
-                ExprKind::ForLoop { pat: _, iter: _, body: _, label: _, kind: _ } => {
-                    // Likewise
+                ExprKind::While(_, while_block, _) => {
+                    self.grok_block(ppt_name.clone(),
+                                    while_block,
+                                    dtrace_param_blocks,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
                     return i+1;
                 }
-                ExprKind::Loop(_loop_block, _, _) => {
-                    // Likewise
+                ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
+                    self.grok_block(ppt_name.clone(),
+                                    for_block,
+                                    dtrace_param_blocks,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                }
+                ExprKind::Loop(loop_block, _, _) => {
+                    self.grok_block(ppt_name.clone(),
+                                    loop_block,
+                                    dtrace_param_blocks,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
                     return i+1;
                 }
                 _ => {} // ConstBlock? etc., other nested blocks
