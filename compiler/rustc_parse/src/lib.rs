@@ -58,6 +58,23 @@ pub fn new_parser_from_source_str(
     name: FileName,
     source: String,
 ) -> Result<Parser<'_>, Vec<Diag<'_>>> {
+
+    let temporal_file =
+        match &name {
+            FileName::Custom(name) => name == "dtrace_parser",
+            _ => false
+        };
+    if temporal_file {
+        println!("short-circuiting");
+        let stream = lexer::lex_token_trees(psess, &source, rustc_span::BytePos(0), None)?;
+        // let stream = source_file_to_stream(psess, source_file, None)?;
+        let parser = Parser::new(psess, stream, None);
+        // if parser.token == token::Eof {
+        //     parser.token.span = Span::new(end_pos, end_pos, parser.token.span.ctxt(), None);
+        // }
+        return Ok(parser);
+    }
+
     let source_file = psess.source_map().new_source_file(name, source);
     new_parser_from_source_file(psess, source_file)
 }

@@ -4,7 +4,6 @@ use std::mem;
 use rustc_ast::mut_visit::*;
 use rustc_ast::*;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
 use crate::unwrap_or_emit_fatal;
 use crate::parser::daikon_strs::{
     I8, I16, I32, I64, I128, ISIZE,
@@ -15,7 +14,7 @@ use crate::parser::daikon_strs::{
     build_inc, build_ret, dtrace_print_fields_prologue,
     build_field_prim, build_field_userdef,
     dtrace_print_fields_epilogue, base_impl,
-    build_phony_ret
+    build_phony_ret, build_void_return
 };
 
 use ast::token::IdentIsRaw;
@@ -43,7 +42,7 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
-static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
+// static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));register
 
 /*
    Visitor for defining struct-specific routines
@@ -205,9 +204,35 @@ fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
-// struct-specific subroutines? place_holder_with_fields?
+fn last_stmt_is_void_return(block: &P<Block>) -> bool {
+    if block.stmts.len() == 0 { panic!("no stmts to check"); }
+    match &block.stmts[block.stmts.len()-1].kind {
+        StmtKind::Semi(semi) => match &semi.kind {
+            ExprKind::Ret(None) => true,
+            _ => false
+        },
+        _ => false
+    }
+}
 
 impl<'a> DaikonImplInserterVisitor<'a> {
+    fn append_to_block(&self, stuff: String, block: &mut P<Block>) {
+        match &self.parser.parse_items_from_string(stuff.clone()) {
+            Err(_why) => panic!("Parsing internal String failed"),
+            Ok(items) => match &items[0].kind {
+                ItemKind::Fn(wrapper) => match &wrapper.body {
+                    None => panic!("No body to insert"),
+                    Some(body) => {
+                        for stmt in body.stmts.clone() {
+                            block.stmts.push(stmt.clone());
+                        }
+                    }
+                }
+                _ => panic!("Expected Fn in append_to_block")
+            }
+        }
+    }
+
     fn insert_into_block(&self, loc: usize, stuff: String, block: &mut P<Block>) -> usize {
         let mut i = loc;
         let items = self.parser.parse_items_from_string(stuff.clone());
@@ -273,32 +298,6 @@ impl<'a> DaikonImplInserterVisitor<'a> {
             _ => panic!("Internal error handling if stmt with else!")
         }
     }
-
-    // if it can be a return, it is, this is part of the final stmt.
-    // #[allow(rustc::default_hash_types)]
-    // fn grok_final_stmt_in_block(&mut self,
-    //                             loc: usize,
-    //                             body: &mut P<Block>,
-    //                             exit_counter: &mut usize,
-    //                             ppt_name: String,
-    //                             dtrace_param_blocks: &mut Vec<String>
-    //                             param_to_block_idx: &HashMap<String, i32>,
-    //                             ret_ty: &BasicType) {
-    //     let mut i = loc;
-    //     let stmt = body.stmts[i].clone();
-    //     match &mut body.stmts[i].kind {
-    //         StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
-    //             ExprKind::Block(block, _) => {
-
-    //             }
-    //             ExprKind::If(_, if_block, None) => panic!("If block with no else at end of function"),
-    //             Exprkind::If(_, if_block, Some(expr)) => {
-
-    //             }
-
-    //         }
-    //     }
-    // }
 
     // grok body.stmts[i]
     #[allow(rustc::default_hash_types)]
@@ -683,6 +682,19 @@ impl<'a> DaikonImplInserterVisitor<'a> {
             i = self.insert_into_block(i, param_block.clone(), body);
         }
 
+        // before grokking fn body, turn implicit void return into "return;"
+        // this may be unreachable in some situations like
+        // fn foo(t: bool) { if t == true { return; } else { return; } }
+        // this cannot be avoided without some reachability analysis
+        match &ret_ty {
+            BasicType::NoRet => {
+                if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
+                    self.append_to_block(build_void_return(), body);
+                }
+            }
+            _ => {}
+        }
+
         // look for returns and nested blocks (recurse in those cases)
         let mut exit_counter = 1;
 
@@ -697,21 +709,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                &ret_ty) // match on Semi mainly for now, find return <expr>; and add an exit point.
         }
 
-        // grok final stmt
-        //if original_len > 0 {
-            // (i will handle this later, I don't think it will be so bad)
-            // just have to recurse if it's a block
-            // self.grok_final_stmt_in_block(body.stmts[body.stmts.len()-1],
-            //                               &mut exit_counter,
-            //                               ppt_name.clone(),
-            //                               dtrace_param_blocks,
-            //                               &param_to_block_idx,
-            //                               &ret_ty);
-        //}
-
-    } // fact?: if you have a non Semi expr and it is not the final statement, it cannot be a return value
-      // it may be intended to be a return value but the program is not well-formed and does not (?) compile.
-      // if it does compile, that's probably messed up (?) and you shouldn't worry about handling it.
+    }
 }
 
 impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
@@ -764,7 +762,9 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
         */
         let get_struct = pprust::item_to_string(&item);
         match &mut item.kind {
-            ItemKind::Enum(_ident, _generics, _enum_def) => {}
+            ItemKind::Enum(_ident, _generics, _enum_def) => {
+                // TODO: generate the same but noop
+            }
             ItemKind::Struct(_ident, generics, variant_data) => {
                 // where is the lifetime specifier? (generics, forward them to the impl block)
                 // println!("struct {}\n\n", ident);
@@ -778,7 +778,9 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                     _ => {}
                 }
             }
-            ItemKind::Union(_ident, _generics, _variant_data) => {}
+            ItemKind::Union(_ident, _generics, _variant_data) => {
+                // TODO: generate the same but noop
+            }
             _ => {}
         }
 
@@ -810,20 +812,18 @@ impl<'a> Parser<'a> {
     }
 
     // Convert String to items
+    // TODO: delete the file from the source map after parsing, then the counter can
+    //       go away. Also some errors will probably occur in some cases if they stay
+    //       and are type-checked which they will be later.
     pub fn parse_items_from_string(&self, str: String) -> PResult<'a, ThinVec<P<Item>>> {
-        let count = *PARSER_COUNTER.lock().unwrap();
+        // let count = *PARSER_COUNTER.lock().unwrap();
         let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
-            rustc_span::FileName::anon_source_code(&format!("{}{}",
-                                                            "parser",
-                                                            count.to_string())),
-                                                            // please make file name unique to each call!
-                                                            // otherwise source file map will return something u
-                                                            // already used.
+            rustc_span::FileName::Custom(String::from("dtrace_parser")),
             str,
         ));
 
-        *PARSER_COUNTER.lock().unwrap() += 1;
+        // *PARSER_COUNTER.lock().unwrap() += 1;
 
         let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
 

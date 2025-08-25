@@ -3,6 +3,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::{iter, mem};
 
+// use std::collections::HashMap;
+
 use rustc_ast::mut_visit::*;
 use rustc_ast::ptr::P;
 use rustc_ast::tokenstream::TokenStream;
@@ -454,6 +456,46 @@ impl Invocation {
     }
 }
 
+// #[allow(rustc::default_hash_types)]
+// struct DeclsHashMapBuilder<'a> {
+//     pub map: &'a mut HashMap<Ident, P<Item>>,
+// }
+
+// impl<'a> Visitor for DeclsHashMapBuilder<'a> {
+//     fn visit_item(&mut self, item: &Item) {
+//         /*
+//             TODO: match with structs, enums, and unions.
+//                   Nested declarations will also be visited
+//                   recursively, so don't worry about that here.
+//         */
+//         let get_struct = pprust::item_to_string(&item);
+//         match &item.kind {
+//             ItemKind::Struct(_ident, generics, variant_data) => {
+//                 match variant_data {
+//                     VariantData::Struct { fields, recovered: _recovered } => {
+//                         self.map.insert(ident.clone(), item.clone());
+//                     }
+//                     VariantData::Tuple(_, _) => {}
+//                     _ => {}
+//                 }
+//             }
+//             _ => {}
+//         }
+
+//         mut_visit::walk_item(self, item);
+//     }
+// }
+
+// struct DaikonDeclsVisitor<'a> {
+//     pub map: &'a HashMap<String, P<Item>>,
+// }
+
+// impl<'a> Visitor for DaikonDeclsVisitor<'a> {
+//     fn visit_fn_decl(&mut self, decl: &'a FnDecl) {
+
+//     }
+// }
+
 pub struct MacroExpander<'a, 'b> {
     pub cx: &'a mut ExtCtxt<'b>,
     monotonic: bool, // cf. `cx.monotonic_expander()`
@@ -479,6 +521,17 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             dir_path,
         });
         let krate = self.fully_expand_fragment(AstFragment::Crate(krate)).make_crate();
+        // decls
+        // pass through entire krate building HashMap<String, P<Item>> (ItemKind::Struct always)
+        // open dtrace/decls files for writing
+        // apply normal Visitor (non-mutable) and visit fns only, skipping over generated stuff we added
+        // use HashMap to write ppt-enter at each fn
+        // step through the function similar to item.rs to find all return ret;, and write ppt-exit.
+        //   (this re-does some work of counting exit points and finding drop() calls or other invalidations, but eh..)
+        // let mut struct_map: HashMap<String, P<Item>> = HashMap::new();
+
+
+        // println!("\n\n\ncrate:\n\n{}", pprust::crate_to_string_for_macros(&krate));
         assert_eq!(krate.id, ast::CRATE_NODE_ID);
         self.cx.trace_macros_diag();
         krate

@@ -124,7 +124,9 @@ pub(crate) fn build_userdef(var_name: String, depth_arg: i32) -> String {
     res
 }
 
-pub(crate) static DTRACE_USERDEF_STRUCT: [&str; 3] = ["self.",
+pub(crate) static DTRACE_USERDEF_STRUCT: [&str; 5] = ["dtrace_print_pointer(self.",
+                                                      " as *const _ as usize, format!(\"{}{}\", prefix, \".",
+                                                      "\"));\nself.",
                                                       ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
                                                       "\"));"];
 pub(crate) fn build_field_userdef(field_name: String) -> String {
@@ -133,6 +135,10 @@ pub(crate) fn build_field_userdef(field_name: String) -> String {
     res.push_str(DTRACE_USERDEF_STRUCT[1]);
     res.push_str(&field_name);
     res.push_str(DTRACE_USERDEF_STRUCT[2]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT[3]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT[4]);
     res
 }
 
@@ -167,11 +173,19 @@ pub(crate) fn base_impl() -> String {
     String::from(BUILD_A_IMPL_BLOCK)
 }
 
-pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 2] = ["fn foo() -> ",
-                                                        " {}"];
+pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 3] = ["fn foo() -> ",
+                                                        " {}\nstruct ",
+                                                        "{}"];
 pub(crate) fn build_phony_ret(struct_name: String) -> String {
     let mut res = String::from(FABRICATE_TYPE_FOR_IMPL[0]);
     res.push_str(&struct_name);
     res.push_str(FABRICATE_TYPE_FOR_IMPL[1]);
+    res.push_str(&struct_name);
+    res.push_str(FABRICATE_TYPE_FOR_IMPL[2]);
     res
+}
+
+pub(crate) static VOID_RETURN: &str = "fn main() { return; }";
+pub(crate) fn build_void_return() -> String {
+    String::from(VOID_RETURN)
 }
