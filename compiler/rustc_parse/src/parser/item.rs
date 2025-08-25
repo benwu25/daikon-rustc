@@ -1,6 +1,7 @@
 use std::fmt::Write;
 use std::mem;
 
+use std::sync::{LazyLock, Mutex};
 use rustc_ast::mut_visit::*;
 use rustc_ast::*;
 use std::collections::HashMap;
@@ -14,7 +15,8 @@ use crate::parser::daikon_strs::{
     build_inc, build_ret, dtrace_print_fields_prologue,
     build_field_prim, build_field_userdef,
     dtrace_print_fields_epilogue, base_impl,
-    build_phony_ret, build_void_return
+    build_phony_ret, build_void_return, daikon_lib,
+    build_imports, build_nonce_counter
 };
 
 use ast::token::IdentIsRaw;
@@ -727,7 +729,17 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &mut fk {
             FnKind::Fn(_ctxt, _vis, f) => {
-                // println!("{}\n\n", f.ident);
+                // nonce counter (move to function)
+                let ppt_name = String::from(f.ident.as_str());
+                match &self.parser.parse_items_from_string(build_nonce_counter(ppt_name.clone())) {
+                    Err(_why) => panic!("Can't parse nonce counter"),
+                    Ok(items) => {
+                        for item in items {
+                            println!("counter:\n{}\n\n", pprust::item_to_string(&item));
+                            self.mod_items.push(item.clone());
+                        }
+                    }
+                }
                 // get block of dtrace chunks -- one for each param
                 let mut dtrace_param_blocks = self.grok_fn_sig(&f.sig.decl);
                 let param_to_block_idx = map_params(&f.sig.decl);
@@ -741,7 +753,7 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                         // add a dtrace_entry record in grok_fn_body, and
                         // make sure to separately pass in the calls generated
                         // by grok_fn_sig
-                        self.grok_fn_body(String::from(f.ident.as_str()),
+                        self.grok_fn_body(ppt_name.clone(),
                                           body,
                                           &mut dtrace_param_blocks,
                                           param_to_block_idx,
@@ -788,6 +800,9 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
     }
 }
 
+static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
+
 impl<'a> Parser<'a> {
     /// Parses a source module as a crate. This is the main entry point for the parser.
     pub fn parse_crate_mod(&mut self) -> PResult<'a, ast::Crate> {
@@ -816,14 +831,16 @@ impl<'a> Parser<'a> {
     //       go away. Also some errors will probably occur in some cases if they stay
     //       and are type-checked which they will be later.
     pub fn parse_items_from_string(&self, str: String) -> PResult<'a, ThinVec<P<Item>>> {
-        // let count = *PARSER_COUNTER.lock().unwrap();
+        let count = *PARSER_COUNTER.lock().unwrap();
+        // self.psess.dcx().make_silent();
+        // self.psess.dcx().reset_err_count();
         let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
-            rustc_span::FileName::Custom(String::from("dtrace_parser")),
+            rustc_span::FileName::Custom(format!("{}{}", "dtrace_parser", count.to_string())),
             str,
         ));
 
-        // *PARSER_COUNTER.lock().unwrap() += 1;
+        *PARSER_COUNTER.lock().unwrap() += 1;
 
         let mut tmp_items: ThinVec<P<_>> = ThinVec::new();
 
@@ -835,6 +852,7 @@ impl<'a> Parser<'a> {
             };
             tmp_items.push(item);
         }
+        // self.psess.dcx().reset_err_count();
         Ok(tmp_items)
     }
 
@@ -852,7 +870,7 @@ impl<'a> Parser<'a> {
         // Determine whether we are building internally
         let source_map = self.psess.source_map();
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
-        let do_visitor = match &source_file {
+        *DO_VISITOR.lock().unwrap() = match &source_file {
             Some(sf) => match &sf.name {
                 rustc_span::FileName::Real(file_name) => match &file_name {
                     rustc_span::RealFileName::LocalPath(path) => match &path.to_str() {
@@ -917,7 +935,7 @@ impl<'a> Parser<'a> {
 
         //== Daikon dtrace instrumentation passes ==//
 
-        if do_visitor {
+        if *DO_VISITOR.lock().unwrap() {
 
             // TODO: implement
             // do all mutation things
@@ -926,17 +944,34 @@ impl<'a> Parser<'a> {
                 DaikonImplInserterVisitor { parser: &self, mod_items: &mut items_to_append };
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
+            // push daikon library and items_to_append to items.
+            match &self.parse_items_from_string(daikon_lib()) {
+                Err(_why) => panic!("Can't parse daikon lib"),
+                Ok(items) => {
+                    for item in items {
+                        items_to_append.push(item.clone());
+                    }
+                }
+            }
+            // imports
+            match &self.parse_items_from_string(build_imports()) {
+                Err(_why) => panic!("Can't parse imports"),
+                Ok(prepend_items) => {
+                    for item in prepend_items {
+                        items.insert(0, item.clone());
+                    }
+                }
+            }
+
             let mut i = 0;
             while i < items_to_append.len() {
                 items.push(items_to_append[i].clone());
                 i += 1;
             }
 
-            // TODO: implement
-            // push daikon library and items_to_append to items.
-
             let mut i = 0;
             while i < items.len() {
+                // TODO: pretty print to a file so it's more clear this is working.
                 println!("{}\n", pprust::item_to_string(&items[i]));
                 i += 1;
             }

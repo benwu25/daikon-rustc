@@ -37,7 +37,7 @@ pub(crate) static VEC: &str = "Vec";
 
 // placeholders are between the strs
 
-pub(crate) static DTRACE_ENTRY: [&str; 3] = ["fn main() { dtrace_entry(\"",
+pub(crate) static DTRACE_ENTRY: [&str; 3] = ["fn __skip() { dtrace_entry(\"",
                                              ":::ENTER\", *",
                                              "_COUNTER.lock().unwrap()); }"];
 pub(crate) fn build_entry(ppt_name: String) -> String {
@@ -49,7 +49,7 @@ pub(crate) fn build_entry(ppt_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_EXIT: [&str; 4] = ["fn main() { dtrace_exit(\"",
+pub(crate) static DTRACE_EXIT: [&str; 4] = ["fn __skip() { dtrace_exit(\"",
                                            ":::EXIT",
                                            "\", *",
                                            "_COUNTER.lock().unwrap()); }"];
@@ -64,7 +64,7 @@ pub(crate) fn build_exit(ppt_name: String, exit_counter: usize) -> String {
     res
 }
 
-pub(crate) static INC: [&str; 2] = ["fn main() { *",
+pub(crate) static INC: [&str; 2] = ["fn __skip() { *",
                                     "_COUNTER.lock().unwrap() += 1; }"];
 pub(crate) fn build_inc(ppt_name: String) -> String {
     let mut res = String::from(INC[0]);
@@ -73,7 +73,7 @@ pub(crate) fn build_inc(ppt_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_PRIM: [&str; 4] = ["fn main() { dtrace_print_prim::<",
+pub(crate) static DTRACE_PRIM: [&str; 4] = ["fn __skip() { dtrace_print_prim::<",
                                             ">(",
                                             ", String::from(\"",
                                             "\")); }"];
@@ -103,7 +103,7 @@ pub(crate) fn build_field_prim(p_type: String, field_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_USERDEF: [&str; 6] = ["fn main() { dtrace_print_pointer(",
+pub(crate) static DTRACE_USERDEF: [&str; 6] = ["fn __skip() { dtrace_print_pointer(",
                                                " as *const _ as usize, String::from(\"",
                                                "\"));\n",
                                                ".dtrace_print_fields(",
@@ -142,7 +142,7 @@ pub(crate) fn build_field_userdef(field_name: String) -> String {
     res
 }
 
-pub(crate) static LET_RET: [&str; 2] = ["fn main() { let ret = ",
+pub(crate) static LET_RET: [&str; 2] = ["fn __skip() { let ret = ",
                                         "; }"];
 pub(crate) fn build_let_ret(expr: String) -> String {
     let mut res = String::from(LET_RET[0]);
@@ -151,29 +151,29 @@ pub(crate) fn build_let_ret(expr: String) -> String {
     res
 }
 
-pub(crate) static RET: [&str; 1] = ["fn main() { return ret; }"];
+pub(crate) static RET: [&str; 1] = ["fn __skip() { return ret; }"];
 pub(crate) fn build_ret() -> String {
     String::from(RET[0])
 }
 
 // you have to delete this?
 // make this an array with DTRACE_PRINT_FIELDS_EPILOGUE...
-pub(crate) static DTRACE_PRINT_FIELDS_PROLOGUE: &str = "impl X { pub fn dtrace_print_fields(&self, depth: i32, prefix: String) { if depth == 0 { return; } ";
+pub(crate) static DTRACE_PRINT_FIELDS_PROLOGUE: &str = "impl __skip { pub fn dtrace_print_fields(&self, depth: i32, prefix: String) { if depth == 0 { return; } ";
 pub(crate) fn dtrace_print_fields_prologue() -> String {
     String::from(DTRACE_PRINT_FIELDS_PROLOGUE)
 }
 
-pub(crate) static DTRACE_PRINT_FIELDS_EPILOGUE: &str = "} } struct X{}"; // maybe can avoid deleting it, but still bad
+pub(crate) static DTRACE_PRINT_FIELDS_EPILOGUE: &str = "} } struct __skip{}"; // maybe can avoid deleting it, but still bad
 pub(crate) fn dtrace_print_fields_epilogue() -> String {
     String::from(DTRACE_PRINT_FIELDS_EPILOGUE)
 }
 
-pub(crate) static BUILD_A_IMPL_BLOCK: &str = "impl X {}";
+pub(crate) static BUILD_A_IMPL_BLOCK: &str = "impl __skip {}";
 pub(crate) fn base_impl() -> String {
     String::from(BUILD_A_IMPL_BLOCK)
 }
 
-pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 3] = ["fn foo() -> ",
+pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 3] = ["fn __skip() -> ",
                                                         " {}\nstruct ",
                                                         "{}"];
 pub(crate) fn build_phony_ret(struct_name: String) -> String {
@@ -185,7 +185,162 @@ pub(crate) fn build_phony_ret(struct_name: String) -> String {
     res
 }
 
-pub(crate) static VOID_RETURN: &str = "fn main() { return; }";
+pub(crate) static VOID_RETURN: &str = "fn __skip() { return; }";
 pub(crate) fn build_void_return() -> String {
     String::from(VOID_RETURN)
+}
+
+pub(crate) static NONCE_COUNTER: [&str; 2] = ["static ",
+                                              "_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(1));"];
+pub(crate) fn build_nonce_counter(ppt_name: String) -> String {
+    let mut res = String::from(NONCE_COUNTER[0]);
+    res.push_str(&ppt_name.to_uppercase());
+    res.push_str(NONCE_COUNTER[1]);
+    res
+}
+
+pub(crate) static IMPORTS: &str = "use std::fs::File;\nuse std::io::prelude::*;\nuse std::sync::{LazyLock, Mutex};\n";
+pub(crate) fn build_imports() -> String {
+    String::from(IMPORTS)
+}
+
+pub(crate) static DAIKON_LIB: &str =
+"pub fn dtrace_print_pointer_arr<T>(v: &[&T], var_name: String) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", var_name).ok();
+    let mut arr = String::from(\"[\");
+    let mut i = 0;
+    while i < v.len() - 1 {
+        arr.push_str(&format!(\"0x{:x} \", v[i] as *const _ as usize));
+        i += 1;
+    }
+    if v.len() > 0 {
+        arr.push_str(&format!(\"0x{:x}\", v[v.len() - 1] as *const _ as usize));
+    }
+    arr.push_str(\"]\");
+    writeln!(&mut traces, \"{}\", arr).ok();
+    writeln!(&mut traces, \"0\").ok();
+}
+
+pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", var_name).ok();
+    let mut arr = String::from(\"[\");
+    let mut i = 0;
+    while i < v.len() - 1 {
+        arr.push_str(&format!(\"0x{:x} \", v[i] as *const _ as usize));
+        i += 1;
+    }
+    if v.len() > 0 {
+        arr.push_str(&format!(\"0x{:x}\", v[v.len() - 1] as *const _ as usize));
+    }
+    arr.push_str(\"]\");
+    writeln!(&mut traces, \"{}\", arr).ok();
+    writeln!(&mut traces, \"0\").ok();
+}
+
+// T must implement Display trait
+fn dtrace_print_prim_arr<T: std::fmt::Display>(v: &[T], prefix: String) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", format!(\"{}{}\", prefix, \"[..]\")).ok();
+    let mut arr = String::from(\"[\");
+    let mut i = 0;
+    while i < v.len() - 1 {
+        arr.push_str(&format!(\"{} \", v[i]));
+        i += 1;
+    }
+    if v.len() > 0 {
+        arr.push_str(&format!(\"{}\", v[v.len() - 1]));
+    }
+    arr.push_str(\"]\");
+    writeln!(&mut traces, \"{}\", arr).ok();
+    writeln!(&mut traces, \"0\").ok();
+}
+
+fn dtrace_print_str(v: &str, var_name: String) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", var_name).ok();
+    writeln!(&mut traces, \"{}\", v).ok();
+    writeln!(&mut traces, \"0\").ok();
+}
+
+// T must implement Display trait
+fn dtrace_print_prim<T: std::fmt::Display>(v: T, var_name: String) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", var_name).ok();
+    writeln!(&mut traces, \"{}\", v).ok();
+    writeln!(&mut traces, \"0\").ok();
+}
+
+fn dtrace_print_pointer(v: usize, var_name: String) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", var_name).ok();
+    writeln!(&mut traces, \"0x{:x}\", v).ok();
+    writeln!(&mut traces, \"0\").ok();
+}
+
+fn dtrace_entry_no_nonce(ppt_name: &str) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", ppt_name).ok();
+}
+
+fn dtrace_exit_no_nonce(ppt_name: &str) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", ppt_name).ok();
+}
+
+fn dtrace_entry(ppt_name: &str, nonce: u32) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(&mut traces, \"{}\", ppt_name).ok();
+    writeln!(&mut traces, \"this_invocation_nonce\").ok();
+    writeln!(&mut traces, \"{}\", nonce).ok();
+}
+
+fn dtrace_exit(ppt_name: &str, nonce: u32) {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(traces, \"{}\", ppt_name).ok();
+    writeln!(traces, \"this_invocation_nonce\").ok();
+    writeln!(traces, \"{}\", nonce).ok();
+}
+
+fn dtrace_newline() {
+    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+        Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
+        Ok(traces) => traces,
+    };
+    writeln!(traces, \"\").ok();
+}";
+
+pub(crate) fn daikon_lib() -> String {
+    String::from(DAIKON_LIB)
 }
