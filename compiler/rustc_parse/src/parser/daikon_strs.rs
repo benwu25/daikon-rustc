@@ -68,7 +68,7 @@ pub(crate) static INC: [&str; 2] = ["fn main() { *",
                                     "_COUNTER.lock().unwrap() += 1; }"];
 pub(crate) fn build_inc(ppt_name: String) -> String {
     let mut res = String::from(INC[0]);
-    res.push_str(&ppt_name);
+    res.push_str(&ppt_name.to_uppercase());
     res.push_str(INC[1]);
     res
 }
@@ -85,6 +85,21 @@ pub(crate) fn build_prim(p_type: String, var_name: String) -> String {
     res.push_str(DTRACE_PRIM[2]);
     res.push_str(&var_name);
     res.push_str(DTRACE_PRIM[3]);
+    res
+}
+
+pub(crate) static DTRACE_PRIM_STRUCT: [&str; 4] = ["dtrace_print_prim::<",
+                                                  ">(self.",
+                                                  ", format!(\"{}{}\", prefix, \".",
+                                                  "\"));"];
+pub(crate) fn build_field_prim(p_type: String, field_name: String) -> String {
+    let mut res = String::from(DTRACE_PRIM_STRUCT[0]);
+    res.push_str(&p_type);
+    res.push_str(DTRACE_PRIM_STRUCT[1]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRIM_STRUCT[2]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRIM_STRUCT[3]);
     res
 }
 
@@ -109,6 +124,18 @@ pub(crate) fn build_userdef(var_name: String, depth_arg: i32) -> String {
     res
 }
 
+pub(crate) static DTRACE_USERDEF_STRUCT: [&str; 3] = ["self.",
+                                                      ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
+                                                      "\"));"];
+pub(crate) fn build_field_userdef(field_name: String) -> String {
+    let mut res = String::from(DTRACE_USERDEF_STRUCT[0]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT[1]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT[2]);
+    res
+}
+
 pub(crate) static LET_RET: [&str; 2] = ["fn main() { let ret = ",
                                         "; }"];
 pub(crate) fn build_let_ret(expr: String) -> String {
@@ -121,4 +148,30 @@ pub(crate) fn build_let_ret(expr: String) -> String {
 pub(crate) static RET: [&str; 1] = ["fn main() { return ret; }"];
 pub(crate) fn build_ret() -> String {
     String::from(RET[0])
+}
+
+// you have to delete this?
+// make this an array with DTRACE_PRINT_FIELDS_EPILOGUE...
+pub(crate) static DTRACE_PRINT_FIELDS_PROLOGUE: &str = "impl X { pub fn dtrace_print_fields(&self, depth: i32, prefix: String) { if depth == 0 { return; } ";
+pub(crate) fn dtrace_print_fields_prologue() -> String {
+    String::from(DTRACE_PRINT_FIELDS_PROLOGUE)
+}
+
+pub(crate) static DTRACE_PRINT_FIELDS_EPILOGUE: &str = "} } struct X{}"; // maybe can avoid deleting it, but still bad
+pub(crate) fn dtrace_print_fields_epilogue() -> String {
+    String::from(DTRACE_PRINT_FIELDS_EPILOGUE)
+}
+
+pub(crate) static BUILD_A_IMPL_BLOCK: &str = "impl X {}";
+pub(crate) fn base_impl() -> String {
+    String::from(BUILD_A_IMPL_BLOCK)
+}
+
+pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 2] = ["fn foo() -> ",
+                                                        " {}"];
+pub(crate) fn build_phony_ret(struct_name: String) -> String {
+    let mut res = String::from(FABRICATE_TYPE_FOR_IMPL[0]);
+    res.push_str(&struct_name);
+    res.push_str(FABRICATE_TYPE_FOR_IMPL[1]);
+    res
 }

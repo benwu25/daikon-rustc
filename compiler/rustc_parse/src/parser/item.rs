@@ -12,7 +12,10 @@ use crate::parser::daikon_strs::{
     F32, F64, CHAR, BOOL, UNIT, STR,
     STRING, VEC, build_entry, build_prim,
     build_userdef, build_exit, build_let_ret,
-    build_inc, build_ret
+    build_inc, build_ret, dtrace_print_fields_prologue,
+    build_field_prim, build_field_userdef,
+    dtrace_print_fields_epilogue, base_impl,
+    build_phony_ret
 };
 
 use ast::token::IdentIsRaw;
@@ -50,7 +53,7 @@ struct DaikonImplInserterVisitor<'a> {
     pub parser: &'a Parser<'a>,
 
     // For appending impl blocks to the file (tested, works to push to items in parse_mod)
-    pub _mod_items: &'a mut ThinVec<P<Item>>,
+    pub mod_items: &'a mut ThinVec<P<Item>>,
 }
 
 // call generation subroutines?
@@ -139,6 +142,28 @@ fn grok_vec_args(path: &Path) -> BasicType {
             },
             _ => BasicType::Error,
         },
+    }
+}
+
+fn splice_struct(pp_struct: &String) -> String {
+    let start_idx = pp_struct.find(" ");
+    match &start_idx {
+        None => panic!("Can't find space in pp_struct"),
+        Some(idx) => {
+            let bound = pp_struct.find("{");
+            match &bound {
+                None => panic!("Can't find {{ in pp_struct"),
+                Some(bound) => {
+                    let mut i = idx+1;
+                    let mut res = String::from("");
+                    while i < *bound {
+                        res.push_str(&String::from(pp_struct.chars().nth(i).unwrap()));
+                        i += 1;
+                    }
+                    res
+                }
+            }
+        }
     }
 }
 
@@ -249,6 +274,32 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         }
     }
 
+    // if it can be a return, it is, this is part of the final stmt.
+    // #[allow(rustc::default_hash_types)]
+    // fn grok_final_stmt_in_block(&mut self,
+    //                             loc: usize,
+    //                             body: &mut P<Block>,
+    //                             exit_counter: &mut usize,
+    //                             ppt_name: String,
+    //                             dtrace_param_blocks: &mut Vec<String>
+    //                             param_to_block_idx: &HashMap<String, i32>,
+    //                             ret_ty: &BasicType) {
+    //     let mut i = loc;
+    //     let stmt = body.stmts[i].clone();
+    //     match &mut body.stmts[i].kind {
+    //         StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
+    //             ExprKind::Block(block, _) => {
+
+    //             }
+    //             ExprKind::If(_, if_block, None) => panic!("If block with no else at end of function"),
+    //             Exprkind::If(_, if_block, Some(expr)) => {
+
+    //             }
+
+    //         }
+    //     }
+    // }
+
     // grok body.stmts[i]
     #[allow(rustc::default_hash_types)]
     fn grok_stmt(&mut self,
@@ -330,8 +381,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     &ret_ty,
                                     exit_counter);
                     return i+1;
-                }
-                _ => {} // ConstBlock? etc., other nested blocks
+                } // missing Match blocks, TryBlock, Const block? probably more
+                _ => {}
             }
             _ => {}
         }
@@ -349,7 +400,11 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     let inc = build_inc(ppt_name.clone());
                     i = self.insert_into_block(i, inc, body);
 
-                    // did you put return; in the right place?
+                    // we're sitting on the void return we just processed, so inc
+                    // to move on
+                    i += 1;
+
+                    // did you put return; in the right place? (no)
                 }
                 ExprKind::Ret(Some(return_expr)) => {
                     let exit = build_exit(ppt_name.clone(), *exit_counter);
@@ -397,14 +452,151 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                 ExprKind::Call(_call, _params) => { return i+1; } // Maybe check for drop and other invalidations
                 _ => { return i+1; } // other things you overlooked
             }
-            StmtKind::Empty => { return i+1; }
-            StmtKind::MacCall(_mac_call) => { return i+1; }
+            // non-block exprs are exit points, approximating this with a catch-all for non-semi exprs
+            StmtKind::Expr(no_semi_expr) => { // we know it is not a block, so it must be trailing no-semi return expr
+                let exit = build_exit(ppt_name.clone(), *exit_counter);
+                *exit_counter += 1;
+
+                i = self.insert_into_block(i, exit.clone(), body);
+
+                for param_block in &mut *dtrace_param_blocks {
+                    // :0 very scary scary
+                    i = self.insert_into_block(i, param_block.clone(), body);
+                }
+
+                // Process return expr
+                let expr = pprust::expr_to_string(no_semi_expr);
+                let ret_let = build_let_ret(expr.clone());
+                i = self.insert_into_block(i, ret_let, body);
+
+                match &ret_ty {
+                    BasicType::Prim(p_type) => {
+                        let prim_record_ret = build_prim(p_type.clone(), String::from("ret"));
+                        i = self.insert_into_block(i, prim_record_ret, body);
+                    }
+                    BasicType::UserDef => {
+                        let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
+                        i = self.insert_into_block(i, userdef_record_ret, body);
+                    }
+                    BasicType::PrimVec(_p_type) => {}
+                    BasicType::UserDefVec => {}
+                    BasicType::PrimArray(_p_type) => {},
+                    BasicType::UserDefArray => {}
+                    BasicType::NoRet => {},
+                    BasicType::Error => panic!("ret_ty is BasicType::Error")
+                }
+
+                let inc = build_inc(ppt_name.clone());
+                i = self.insert_into_block(i, inc, body);
+                let ret = build_ret();
+                i = self.insert_into_block(i, ret, body);
+
+                // remove old return stmt
+                body.stmts.remove(i); // will want to println! this to debug
+            }
             _ => {}
         }
         i
     }
 
-    /* WIP
+    fn base_impl_item(&mut self) -> P<Item> {
+        let base_impl = base_impl();
+        let base_impl_item = self.parser.parse_items_from_string(base_impl);
+        match &base_impl_item {
+            Err(_why) => panic!("Parsing base impl failed"),
+            Ok(base_impl_item) => base_impl_item[0].clone()
+        }
+    }
+
+    // parse base impl block to an Item
+    // then pattern match on that item to do the modifications:
+    // set self_ty to this struct (clone)
+    // set generics to this struct's generics (clone)
+    // push our function onto the impl block's items.
+    // push that item onto self.mod_items (ok)
+    fn gen_impl(&mut self,
+                fields: &mut ThinVec<FieldDef>,
+                pp_struct: &String,
+                struct_generics: &Generics) {
+        let mut impl_item = self.base_impl_item();
+        let the_impl = match &mut impl_item.kind {
+            ItemKind::Impl(i) => i,
+            _ => panic!("Base impl is not impl")
+        };
+        let splice_struct = splice_struct(&pp_struct);
+        let struct_as_ret = build_phony_ret(splice_struct);
+        the_impl.self_ty = 
+            match &self.parser.parse_items_from_string(struct_as_ret) {
+                Err(_why) => panic!("Parsing phony arg failed"),
+                Ok(arg_items) => match &arg_items[0].kind {
+                    ItemKind::Fn(phony) => match &phony.sig.decl.output {
+                        FnRetTy::Ty(ty) => ty.clone(),
+                        _ => panic!("Phony ret is none")
+                    }
+                    _ => panic!("Parsing phony fn failed")
+                }
+            };
+        the_impl.generics = struct_generics.clone();
+
+        let dtrace_print_fields_fn = self.build_dtrace_print_fields(fields);
+        match &self.parser.parse_items_from_string(dtrace_print_fields_fn) {
+            Err(_why) => panic!("Parsing dtrace_print_fields failed"),
+            Ok(items) => match &items[0].kind {
+                ItemKind::Impl(tmp_impl) => {
+                    the_impl.items.push(tmp_impl.items[0].clone());
+                }
+                _ => panic!("Expected phony impl")
+            }
+        }
+
+        self.mod_items.push(impl_item.clone());
+    }
+
+    // generate calls to put in dtrace_print_fields, maybe also dtrace_print_fields_vec at the same time.
+    // fn grok_struct_fields(&mut self, /* some vec with field info */) { }
+    fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
+        let mut dtrace_print_fields: String = dtrace_print_fields_prologue();
+
+        let mut i = 0;
+        while i < fields.len() {
+            // make pub
+            fields[i].vis.kind = VisibilityKind::Public;
+
+            let field_name = match &fields[i].ident {
+                Some(field_ident) => String::from(field_ident.as_str()),
+                None => panic!("Field has no identifier")
+            };
+
+            let mut dtrace_field_rec =
+                match &get_basic_type(&fields[i].ty.kind) {
+                    BasicType::Prim(p_type) => {
+                        build_field_prim(p_type.clone(), field_name.clone())
+                    }
+                    BasicType::UserDef => {
+                        build_field_userdef(field_name.clone())
+                    }
+                    BasicType::PrimVec(_p_type) => { String::from("") }
+                    BasicType::UserDefVec => { String::from("") }
+                    BasicType::PrimArray(_p_type) => { String::from("") }
+                    BasicType::UserDefArray => { String::from("") }
+                    BasicType::NoRet => { String::from("") }
+                    BasicType::Error => panic!("Field type not handled")
+                };
+            dtrace_field_rec.push_str("\n");
+
+            dtrace_print_fields.push_str(&format!("{}{}", dtrace_field_rec, "\n"));
+            i += 1;
+        }
+
+        format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
+    }
+
+    // TODO
+    // fn grok_fields_for_dtrace_print_fields_vec(&mut self, fields: &ThinVec<FieldDef>) -> Vec<String> {
+
+    // }
+
+    /*
         Determine entry dtrace routines, grok return type.
         return entry dtrace routines and something for the
         return type so grok_fn_body knows what to do and
@@ -426,9 +618,9 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     BasicType::UserDef => {
                         build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
                     }
-                    BasicType::PrimVec(_which) => { String::from("") }
+                    BasicType::PrimVec(_p_type) => { String::from("") }
                     BasicType::UserDefVec => { String::from("") }
-                    BasicType::PrimArray(_which) => { String::from("") }
+                    BasicType::PrimArray(_p_type) => { String::from("") }
                     BasicType::UserDefArray => { String::from("") }
                     BasicType::NoRet => { String::from("") }
                     BasicType::Error => panic!("Formal arg type not handled."),
@@ -461,7 +653,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                ppt_name.clone(),
                                dtrace_param_blocks,
                                &param_to_block_idx,
-                               &ret_ty) // match on Semi mainly for now, find return <expr>; and add an exit point.
+                               &ret_ty) // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
         }
     }
 
@@ -482,7 +674,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     dtrace_param_blocks: &mut Vec<String>,
                     param_to_block_idx: HashMap<String, i32>,
                     ret_ty: &BasicType) { // arg_dtraces: String,
-        let original_len = body.stmts.len();
+        //let original_len = body.stmts.len();
         let mut i = 0;
         let entry = build_entry(ppt_name.clone());
         i = self.insert_into_block(i, entry, body);
@@ -495,7 +687,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         let mut exit_counter = 1;
 
         // assuming no unreachable statements.
-        while i < body.stmts.len()-1 { // make sure loop bound is growing as we insert stmts
+        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
             i = self.grok_stmt(i,
                                body,
                                &mut exit_counter,
@@ -506,9 +698,16 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         }
 
         // grok final stmt
-        if original_len > 0 {
-
-        }
+        //if original_len > 0 {
+            // (i will handle this later, I don't think it will be so bad)
+            // just have to recurse if it's a block
+            // self.grok_final_stmt_in_block(body.stmts[body.stmts.len()-1],
+            //                               &mut exit_counter,
+            //                               ppt_name.clone(),
+            //                               dtrace_param_blocks,
+            //                               &param_to_block_idx,
+            //                               &ret_ty);
+        //}
 
     } // fact?: if you have a non Semi expr and it is not the final statement, it cannot be a return value
       // it may be intended to be a return value but the program is not well-formed and does not (?) compile.
@@ -563,11 +762,21 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                   Nested declarations will also be visited
                   recursively, so don't worry about that here.
         */
-
-        match &item.kind {
+        let get_struct = pprust::item_to_string(&item);
+        match &mut item.kind {
             ItemKind::Enum(_ident, _generics, _enum_def) => {}
-            ItemKind::Struct(_ident, _generics, _variant_data) => {
-                println!("{}\n\n", _ident);
+            ItemKind::Struct(_ident, generics, variant_data) => {
+                // where is the lifetime specifier? (generics, forward them to the impl block)
+                // println!("struct {}\n\n", ident);
+                // println!("generics:\n{:?}\n\n", generics);
+                // println!("variant_data:\n{:?}\n\n", variant_data);
+                match variant_data {
+                    VariantData::Struct { fields, recovered: _recovered } => {
+                        self.gen_impl(fields, &get_struct, &generics);
+                    }
+                    VariantData::Tuple(_, _) => {}
+                    _ => {}
+                }
             }
             ItemKind::Union(_ident, _generics, _variant_data) => {}
             _ => {}
@@ -712,9 +921,9 @@ impl<'a> Parser<'a> {
 
             // TODO: implement
             // do all mutation things
-            let mut items_to_append: ThinVec<P<_>> = ThinVec::new();
+            let mut items_to_append: ThinVec<P<Item>> = ThinVec::new();
             let mut impl_inserter =
-                DaikonImplInserterVisitor { parser: &self, _mod_items: &mut items_to_append };
+                DaikonImplInserterVisitor { parser: &self, mod_items: &mut items_to_append };
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
             let mut i = 0;
@@ -728,7 +937,7 @@ impl<'a> Parser<'a> {
 
             let mut i = 0;
             while i < items.len() {
-                println!("{}", pprust::item_to_string(&items[i]));
+                println!("{}\n", pprust::item_to_string(&items[i]));
                 i += 1;
             }
 
