@@ -152,6 +152,8 @@ fn grok_vec_args(path: &Path) -> BasicType {
 }
 
 fn splice_struct(pp_struct: &String) -> String {
+    // forgot pub struct X ..., causes ICE.
+    // TODO: handle pub struct
     let start_idx = pp_struct.find(" ");
     match &start_idx {
         None => panic!("Can't find space in pp_struct"),
@@ -718,14 +720,6 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                         } else {
                             build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
                         }
-                        // if !is_ref && p_type == "String" {
-                        //     build_prim_with_clone_access(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
-                        // } else if is_ref && p_type != "String" {
-                        //     // pointer
-                        //     build_plain_pointer(get_param_ident(&decl.inputs[i].pat))
-                        // } else { // basic case? &str might be messed up
-                        //     build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
-                        // }
                     }
                     BasicType::UserDef => {
                         if !is_ref {

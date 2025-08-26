@@ -5,10 +5,11 @@ use std::{iter, mem};
 
 use std::collections::HashMap;
 use std::io::Write;
+#[allow(unused_imports)]
 use rustc_ast::{
     Item, VariantData, FnRetTy,
     FnDecl, Block, Path, GenericArgs,
-    AngleBracketedArg, GenericArg
+    AngleBracketedArg, GenericArg, Pat
 };
 use rustc_ast::visit::FnKind;
 use rustc_parse::parser::item::DO_VISITOR;
@@ -470,117 +471,176 @@ impl Invocation {
     }
 }
 
-#[allow(dead_code)]
-#[derive(PartialEq)]
-enum BasicType {
-    Prim(String),
-    UserDef,
-    PrimVec(String),
-    UserDefVec,
-    PrimArray(String),
-    UserDefArray,
-    NoRet,
-    Error,
+// #[allow(dead_code)]
+// #[derive(PartialEq)]
+// enum BasicType {
+//     Prim(String),
+//     UserDef,
+//     PrimVec(String),
+//     UserDefVec,
+//     PrimArray(String),
+//     UserDefArray,
+//     NoRet,
+//     Error,
+// }
+
+fn get_param_ident(pat: &P<Pat>) -> String {
+    match &pat.kind {
+        PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
+        _ => panic!("Formal arg does not have simple identifier"),
+    }
 }
 
-// fn get_param_ident(pat: &P<Pat>) -> String {
-//     match &pat.kind {
-//         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
-//         _ => panic!("Formal arg does not have simple identifier"),
+// fn check_prim(ty_str: &str) -> BasicType {
+//     if ty_str == I8 {
+//         return BasicType::Prim(String::from(I8));
+//     } else if ty_str == I16 {
+//         return BasicType::Prim(String::from(I16));
+//     } else if ty_str == I32 {
+//         return BasicType::Prim(String::from(I32));
+//     } else if ty_str == I64 {
+//         return BasicType::Prim(String::from(I64));
+//     } else if ty_str == I128 {
+//         return BasicType::Prim(String::from(I128));
+//     } else if ty_str == ISIZE {
+//         return BasicType::Prim(String::from(ISIZE));
+//     } else if ty_str == U8 {
+//         return BasicType::Prim(String::from(U8));
+//     } else if ty_str == U16 {
+//         return BasicType::Prim(String::from(U16));
+//     } else if ty_str == U32 {
+//         return BasicType::Prim(String::from(U32));
+//     } else if ty_str == U64 {
+//         return BasicType::Prim(String::from(U64));
+//     } else if ty_str == U128 {
+//         return BasicType::Prim(String::from(U128));
+//     } else if ty_str == USIZE {
+//         return BasicType::Prim(String::from(USIZE));
+//     } else if ty_str == F32 {
+//         return BasicType::Prim(String::from(F32));
+//     } else if ty_str == F64 {
+//         return BasicType::Prim(String::from(F64));
+//     } else if ty_str == CHAR {
+//         return BasicType::Prim(String::from(CHAR));
+//     } else if ty_str == BOOL {
+//         return BasicType::Prim(String::from(BOOL));
+//     } else if ty_str == UNIT {
+//         return BasicType::Prim(String::from(UNIT));
+//     } else if ty_str == STR {
+//         return BasicType::Prim(String::from(STR));
+//     } else if ty_str == STRING {
+//         return BasicType::Prim(String::from(STRING));
+//     }
+//     BasicType::Error
+// }
+
+fn get_prim_rep_type(ty_str: &str) -> String {
+    if ty_str == I8 || ty_str == I16 ||
+       ty_str == I32 || ty_str == I64 ||
+       ty_str == I128 || ty_str == ISIZE ||
+       ty_str == U8 || ty_str == U16 ||
+       ty_str == U32 || ty_str == U64 ||
+       ty_str == U128 || ty_str == USIZE {
+        return String::from("int");
+    } else if ty_str == F32 || ty_str == F64 {
+        return String::from("");
+    } else if ty_str == CHAR {
+        return String::from("char");
+    } else if ty_str == BOOL {
+        return String::from("boolean");
+    } else if ty_str == UNIT {
+        return String::from("");
+    } else if ty_str == STR || ty_str == STRING {
+        return String::from("java.lang.String");
+    }
+    String::from("")
+}
+
+// TODO: check for arrays of these, int[], boolean[], char[], java.lang.String[]
+fn is_java_type(rep_type: &String) -> bool {
+    if rep_type == "int" || rep_type == "char" ||
+       rep_type == "boolean" || rep_type == "java.lang.String" {
+        return true;
+    }
+    return false;
+}
+
+// Will need to adjust this to get rep/dec types
+// fn grok_vec_args(path: &Path) -> BasicType {
+//     match &path.segments[path.segments.len() - 1].args {
+//         None => BasicType::Error,
+//         Some(args) => match &**args {
+//             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
+//                 AngleBracketedArg::Arg(arg) => match &arg {
+//                     GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind) {
+//                         BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
+//                         BasicType::UserDef => BasicType::UserDefVec,
+//                         _ => BasicType::Error,
+//                     },
+//                     _ => BasicType::Error,
+//                 },
+//                 _ => BasicType::Error,
+//             },
+//             _ => BasicType::Error,
+//         },
 //     }
 // }
 
-fn check_prim(ty_str: &str) -> BasicType {
-    if ty_str == I8 {
-        return BasicType::Prim(String::from(I8));
-    } else if ty_str == I16 {
-        return BasicType::Prim(String::from(I16));
-    } else if ty_str == I32 {
-        return BasicType::Prim(String::from(I32));
-    } else if ty_str == I64 {
-        return BasicType::Prim(String::from(I64));
-    } else if ty_str == I128 {
-        return BasicType::Prim(String::from(I128));
-    } else if ty_str == ISIZE {
-        return BasicType::Prim(String::from(ISIZE));
-    } else if ty_str == U8 {
-        return BasicType::Prim(String::from(U8));
-    } else if ty_str == U16 {
-        return BasicType::Prim(String::from(U16));
-    } else if ty_str == U32 {
-        return BasicType::Prim(String::from(U32));
-    } else if ty_str == U64 {
-        return BasicType::Prim(String::from(U64));
-    } else if ty_str == U128 {
-        return BasicType::Prim(String::from(U128));
-    } else if ty_str == USIZE {
-        return BasicType::Prim(String::from(USIZE));
-    } else if ty_str == F32 {
-        return BasicType::Prim(String::from(F32));
-    } else if ty_str == F64 {
-        return BasicType::Prim(String::from(F64));
-    } else if ty_str == CHAR {
-        return BasicType::Prim(String::from(CHAR));
-    } else if ty_str == BOOL {
-        return BasicType::Prim(String::from(BOOL));
-    } else if ty_str == UNIT {
-        return BasicType::Prim(String::from(UNIT));
-    } else if ty_str == STR {
-        return BasicType::Prim(String::from(STR));
-    } else if ty_str == STRING {
-        return BasicType::Prim(String::from(STRING));
-    }
-    BasicType::Error
-}
-
-// is Vec with > 1 arg meaningful?
-fn grok_vec_args(path: &Path) -> BasicType {
-    match &path.segments[path.segments.len() - 1].args {
-        None => BasicType::Error,
-        Some(args) => match &**args {
-            GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
-                AngleBracketedArg::Arg(arg) => match &arg {
-                    GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind) {
-                        BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
-                        BasicType::UserDef => BasicType::UserDefVec,
-                        _ => BasicType::Error,
-                    },
-                    _ => BasicType::Error,
-                },
-                _ => BasicType::Error,
-            },
-            _ => BasicType::Error,
-        },
-    }
-}
-
-// NOTE: don't care about is_ref?
-fn get_basic_type(kind: &TyKind) -> BasicType {
+// who gets hashcode[]
+fn get_rep_type(kind: &TyKind, is_ref: &mut bool, raw_type: &mut String) -> String {
     match &kind {
-        TyKind::Array(_arr_type, _anon_const) => BasicType::Error,
-        TyKind::Ptr(_mut_ty) => BasicType::Error,
+        TyKind::Array(_arr_type, _) => todo!(), // return something like int[], etc.
+        TyKind::Ptr(_) => todo!(),
         TyKind::Ref(_, mut_ty) => {
-            // use recursion to get to the underlying type
-            // :O very scary scary
-            get_basic_type(&mut_ty.ty.kind)
-        },
+            *is_ref = true;
+            return get_rep_type(&mut_ty.ty.kind, is_ref, raw_type);
+        }
         TyKind::Path(_, path) => {
             if path.segments.len() == 0 {
                 panic!("Path has no type");
             }
             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
-            let try_prim = check_prim(ty_string);
-            if try_prim != BasicType::Error {
-                return try_prim;
+            let maybe_prim_rep = get_prim_rep_type(ty_string);
+            if maybe_prim_rep != "" {
+                return maybe_prim_rep;
             }
             if ty_string == VEC {
-                return grok_vec_args(&path);
+                // TODO
+                return String::from(""); // return something like int[], etc.
             }
-            BasicType::UserDef
-        },
-        _ => BasicType::Error,
+            raw_type.push_str(ty_string);
+            return String::from("hashcode");
+        }
+        _ => todo!()
     }
 }
+
+// fn get_basic_type(kind: &TyKind) -> BasicType {
+//     match &kind {
+//         TyKind::Array(_arr_type, _anon_const) => BasicType::Error,
+//         TyKind::Ptr(_mut_ty) => BasicType::Error,
+//         TyKind::Ref(_, mut_ty) => {
+//             // use recursion to get to the underlying type
+//             // :O very scary scary
+//             get_basic_type(&mut_ty.ty.kind)
+//         },
+//         TyKind::Path(_, path) => {
+//             if path.segments.len() == 0 {
+//                 panic!("Path has no type");
+//             }
+//             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
+//             let try_prim = check_prim(ty_string);
+//             if try_prim != BasicType::Error {
+//                 return try_prim;
+//             }
+//             if ty_string == VEC {
+//                 return grok_vec_args(&path);
+//             }
+//             BasicType::UserDef
+//         },
+//         _ => BasicType::Error,
+//     }
+// }
 
 // not sure if this is the way to track nonsense records.
 
@@ -619,6 +679,22 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
     }
 }
 
+#[allow(dead_code)]
+enum DeclCode {
+    Field,
+    ArrContent,
+    TopLevel,
+}
+
+#[allow(dead_code)]
+struct VarDecl {
+    var_name: String,
+    dec_type: String,
+    rep_type: String,
+    code: DeclCode,
+    subvars: Vec<VarDecl>,
+}
+
 #[allow(rustc::default_hash_types)]
 struct DaikonDeclsVisitor<'a> {
     pub _map: &'a HashMap<Ident, P<Item>>,
@@ -640,13 +716,11 @@ impl<'a> DaikonDeclsVisitor<'a> {
     // }
 
     // fn write_var(&mut self,
-    //              var_name: String,
-    //              dec_type: String,
-    //              rep_type: String) {
-    //     writeln!(self.decls, "variable {}", var_name).ok();
+    //              decl: &VarDecl) {
+    //     writeln!(self.decls, "variable {}", decl.var_name).ok();
     //     writeln!(self.decls, "  var-kind variable").ok();
-    //     writeln!(self.decls, "  dec-type {}", dec_type).ok();
-    //     writeln!(self.decls, "  rep-type {}", rep_type).ok();
+    //     writeln!(self.decls, "  dec-type {}", decl.dec_type).ok();
+    //     writeln!(self.decls, "  rep-type {}", decl.rep_type).ok();
     //     writeln!(self.decls, "  flags is_param").ok();
     //     writeln!(self.decls, "  comparability -1").ok();
     // }
@@ -677,31 +751,50 @@ impl<'a> DaikonDeclsVisitor<'a> {
     //     writeln!(self.decls, "  comparability -1").ok();
     // }
 
-    fn grok_fn_sig(&mut self, _decl: &P<FnDecl>) {
-        // let mut i = 0;
-        // while i < decl.inputs.len() {
-        //     match &get_basic_type(&decl.inputs[i].ty.kind) {
-        //         BasicType::Prim(p_type) => {
+    fn grok_fn_sig(&mut self, decl: &P<FnDecl>) -> Vec<VarDecl> {
+        let mut var_decls: Vec<VarDecl> = Vec::new();
+        let mut i = 0;
+        while i < decl.inputs.len() {
 
-        //         }
-        //         BasicType::UserDef => {
-        //             // query map
+            let mut is_ref = false;
 
-        //         }
-        //         BasicType::PrimVec(_p_type) => {}
-        //         BasicType::UserDefVec => {}
-        //         BasicType::PrimArray(_p_type) => {}
-        //         BasicType::UserDefArray => {}
-        //         BasicType::NoRet => {}
-        //         BasicType::Error => panic!("Formal arg type cannot be declared")
-        //     }
-        // }
+            let mut raw_type = String::from("");
+            let rep_type = get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref, &mut raw_type);
+            let dec_type =
+                if is_java_type(&rep_type) {
+                    rep_type.clone()
+                } else if rep_type == "hashcode" {
+                    raw_type.clone() // keep the struct name to lookup when writing this var decl,
+                } else {             // do the same for nested structs.
+                    String::from("<decl>") // is it important otherwise?
+                };
+
+            let var_decl =
+                VarDecl {
+                    var_name: get_param_ident(&decl.inputs[i].pat),
+                    dec_type: dec_type,
+                    rep_type: rep_type,
+                    code: DeclCode::TopLevel,
+                    subvars: Vec::new(),
+                };
+            if var_decl.rep_type == "hashcode" {
+                // query map to recursively build this decl's children
+
+            } // else if var_decl.rep_type == "hashcode[]" {
+            // more cases?
+            // } else if var_decl.rep_type == "int[]"
+
+            var_decls.push(var_decl);
+            i += 1;
+        }
+
+        var_decls
     }
 
     // need some state to remember declarations you wrote for entry?
-    fn grok_fn_body(&mut self, _body: &P<Block>, _ret_ty: &BasicType) {
+    // fn grok_fn_body(&mut self, _body: &P<Block>, _ret_ty: &BasicType) {
 
-    }
+    // }
 }
 
 impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
@@ -711,17 +804,22 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                 if !f.ident.as_str().starts_with("dtrace") {
                     let ppt_name = String::from(f.ident.as_str());
                     self.write_entry(ppt_name.clone());
-                    self.grok_fn_sig(&f.sig.decl);
-                    let ret_ty = match &f.sig.decl.output {
-                        FnRetTy::Default(_) => BasicType::NoRet,
-                        FnRetTy::Ty(ty) => get_basic_type(&ty.kind)
-                    };
+                    let _var_decls = self.grok_fn_sig(&f.sig.decl);
+                    // TODO: probably map params again to know which var decls
+                    //       to make nonsensical when you find invalidating stmts.
+                    // TODO: implement var_decls[i].write(); to allow the visitor to
+                    //       avoid thinking about any of that logic. can remove File
+                    //       field.
+                    // let ret_ty = match &f.sig.decl.output {
+                    //     FnRetTy::Default(_) => BasicType::NoRet,
+                    //     FnRetTy::Ty(ty) => get_basic_type(&ty.kind)
+                    // };
                     match &f.body {
                         None => {}
-                        Some(body) => {
+                        Some(_body) => {
                             // By now, all exit ppts are
                             // explicit Semi(Ret) stmts.
-                            self.grok_fn_body(body, &ret_ty);
+                            // self.grok_fn_body(body, &ret_ty);
                         }
                     }
                 }
