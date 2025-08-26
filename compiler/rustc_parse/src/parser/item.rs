@@ -16,7 +16,11 @@ use crate::parser::daikon_strs::{
     build_field_prim, build_field_userdef,
     dtrace_print_fields_epilogue, base_impl,
     build_phony_ret, build_void_return, daikon_lib,
-    build_imports, build_nonce_counter
+    build_imports, build_nonce_counter,
+    build_userdef_with_ampersand_access,
+    build_field_userdef_with_ampersand_access,
+    build_field_prim_ref, build_prim_field_tostring,
+    build_prim_ref, build_prim_with_tostring
 };
 
 use ast::token::IdentIsRaw;
@@ -127,12 +131,13 @@ fn check_prim(ty_str: &str) -> BasicType {
 
 // is Vec with > 1 arg meaningful?
 fn grok_vec_args(path: &Path) -> BasicType {
+    let mut is_ref = false;
     match &path.segments[path.segments.len() - 1].args {
         None => BasicType::Error,
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
-                    GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind) {
+                    GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind, &mut is_ref) {
                         BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
                         BasicType::UserDef => BasicType::UserDefVec,
                         _ => BasicType::Error,
@@ -168,14 +173,15 @@ fn splice_struct(pp_struct: &String) -> String {
     }
 }
 
-fn get_basic_type(kind: &TyKind) -> BasicType {
+fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
     match &kind {
         TyKind::Array(_arr_type, _anon_const) => BasicType::Error,
         TyKind::Ptr(_mut_ty) => BasicType::Error,
         TyKind::Ref(_, mut_ty) => {
+            *is_ref = true;
             // use recursion to get to the underlying type
             // :O very scary scary
-            get_basic_type(&mut_ty.ty.kind)
+            get_basic_type(&mut_ty.ty.kind, is_ref)
         },
         TyKind::Path(_, path) => {
             if path.segments.len() == 0 {
@@ -265,7 +271,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                         ppt_name: String,
                         dtrace_param_blocks: &mut Vec<String>,
                         param_to_block_idx: &HashMap<String, i32>,
-                        ret_ty: &BasicType) {
+                        ret_ty: &BasicType,
+                        ret_is_ref: &bool) {
         match &mut expr.kind {
             ExprKind::Block(block, _) => {
                 self.grok_block(ppt_name.clone(),
@@ -273,6 +280,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                 dtrace_param_blocks,
                                 &param_to_block_idx,
                                 &ret_ty,
+                                &ret_is_ref,
                                 exit_counter);
             }
             ExprKind::If(_, if_block, None) => {
@@ -281,6 +289,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                 dtrace_param_blocks,
                                 &param_to_block_idx,
                                 &ret_ty,
+                                &ret_is_ref,
                                 exit_counter);
             }
             ExprKind::If(_, if_block, Some(another_expr)) => {
@@ -289,13 +298,15 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                 dtrace_param_blocks,
                                 &param_to_block_idx,
                                 &ret_ty,
+                                &ret_is_ref,
                                 exit_counter);
                 self.grok_expr_for_if(another_expr,
                                       exit_counter,
                                       ppt_name.clone(),
                                       dtrace_param_blocks,
                                       &param_to_block_idx,
-                                      &ret_ty);
+                                      &ret_ty,
+                                      &ret_is_ref);
             }
             _ => panic!("Internal error handling if stmt with else!")
         }
@@ -310,7 +321,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                  ppt_name: String,
                  dtrace_param_blocks: &mut Vec<String>,
                  param_to_block_idx: &HashMap<String, i32>,
-                 ret_ty: &BasicType) -> usize {
+                 ret_ty: &BasicType,
+                 ret_is_ref: &bool) -> usize {
         let mut i = loc;
         let stmt = body.stmts[i].clone();
         println!("{}\n\n", pprust::stmt_to_string(&stmt));
@@ -328,6 +340,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     dtrace_param_blocks,
                                     &param_to_block_idx,
                                     &ret_ty,
+                                    &ret_is_ref,
                                     exit_counter);
                     return i+1;
                 }
@@ -337,6 +350,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     dtrace_param_blocks,
                                     &param_to_block_idx,
                                     &ret_ty,
+                                    &ret_is_ref,
                                     exit_counter);
                     return i+1;
                 }
@@ -346,6 +360,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     dtrace_param_blocks,
                                     &param_to_block_idx,
                                     &ret_ty,
+                                    &ret_is_ref,
                                     exit_counter);
 
                     self.grok_expr_for_if(expr,
@@ -353,7 +368,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                           ppt_name.clone(),
                                           dtrace_param_blocks,
                                           &param_to_block_idx,
-                                          &ret_ty);
+                                          &ret_ty,
+                                          &ret_is_ref);
                     return i+1;
                 }
                 ExprKind::While(_, while_block, _) => {
@@ -362,6 +378,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     dtrace_param_blocks,
                                     &param_to_block_idx,
                                     &ret_ty,
+                                    &ret_is_ref,
                                     exit_counter);
                     return i+1;
                 }
@@ -371,6 +388,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     dtrace_param_blocks,
                                     &param_to_block_idx,
                                     &ret_ty,
+                                    &ret_is_ref,
                                     exit_counter);
                     return i+1;
                 }
@@ -380,6 +398,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     dtrace_param_blocks,
                                     &param_to_block_idx,
                                     &ret_ty,
+                                    &ret_is_ref,
                                     exit_counter);
                     return i+1;
                 } // missing Match blocks, TryBlock, Const block? probably more
@@ -425,12 +444,39 @@ impl<'a> DaikonImplInserterVisitor<'a> {
 
                     match &ret_ty {
                         BasicType::Prim(p_type) => {
-                            let prim_record_ret = build_prim(p_type.clone(), String::from("ret"));
+                            // TODO branch factor
+                            let prim_record_ret =
+                                if p_type == "String" {
+                                    build_prim_with_tostring(p_type.clone(), String::from("ret"))
+                                } else if *ret_is_ref {
+                                    build_prim_ref(p_type.clone(), String::from("ret"))
+                                } else {
+                                    build_prim(p_type.clone(), String::from("ret"))
+                                };
                             i = self.insert_into_block(i, prim_record_ret, body);
+                            // if *ret_is_ref == false && p_type == "String" {
+                            //     let prim_record_ret =
+                            //         build_prim_with_clone_access(p_type.clone(), String::from("ret"));
+                            //     i = self.insert_into_block(i, prim_record_ret, body);
+                            // } else if *ret_is_ref == true && p_type != "String" {
+                            //     // pointer
+                            //     let prim_record_ret =
+                            //         build_plain_pointer(String::from("ret"));
+                            //     i = self.insert_into_block(i, prim_record_ret, body);
+                            // } else {
+                            //     let prim_record_ret = build_prim(p_type.clone(), String::from("ret"));
+                            //     i = self.insert_into_block(i, prim_record_ret, body);
+                            // }
                         }
                         BasicType::UserDef => {
-                            let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
-                            i = self.insert_into_block(i, userdef_record_ret, body);
+                            if *ret_is_ref == false {
+                                let userdef_record_ret =
+                                    build_userdef_with_ampersand_access(String::from("ret"), 3 /* depth arg  */);
+                                i = self.insert_into_block(i, userdef_record_ret, body);
+                            } else {
+                                let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
+                                i = self.insert_into_block(i, userdef_record_ret, body);
+                            }
                         }
                         BasicType::PrimVec(_p_type) => {}
                         BasicType::UserDefVec => {}
@@ -472,12 +518,43 @@ impl<'a> DaikonImplInserterVisitor<'a> {
 
                 match &ret_ty {
                     BasicType::Prim(p_type) => {
-                        let prim_record_ret = build_prim(p_type.clone(), String::from("ret"));
+                        // TODO: use to_string combined with from_str for primitives
+                        // Cases:
+                        // p_type == "String" => call to_string into dtrace_print_prim::<p_type>
+                        // else if is_ref => call from_str(to_string()) into dtrace_print_prim::<p_type>
+                        // else => call dtrace_print_prim::<p_type>
+                        let prim_record_ret =
+                            if p_type == "String" {
+                                build_prim_with_tostring(p_type.clone(), String::from("ret"))
+                            } else if *ret_is_ref {
+                                build_prim_ref(p_type.clone(), String::from("ret"))
+                            } else {
+                                build_prim(p_type.clone(), String::from("ret"))
+                            };
                         i = self.insert_into_block(i, prim_record_ret, body);
+                        // if *ret_is_ref == false && p_type == "String" {
+                        //     let prim_record_ret =
+                        //         build_prim_with_clone_access(p_type.clone(), String::from("ret"));
+                        //     i = self.insert_into_block(i, prim_record_ret, body);
+                        // } else if *ret_is_ref == true && p_type != "String" {
+                        //     // pointer
+                        //     let prim_record_ret =
+                        //         build_plain_pointer(String::from("ret"));
+                        //     i = self.insert_into_block(i, prim_record_ret, body);
+                        // } else {
+                        //     let prim_record_ret = build_prim(p_type.clone(), String::from("ret"));
+                        //     i = self.insert_into_block(i, prim_record_ret, body);
+                        // }
                     }
                     BasicType::UserDef => {
-                        let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
-                        i = self.insert_into_block(i, userdef_record_ret, body);
+                        if *ret_is_ref == false {
+                            let userdef_record_ret =
+                                build_userdef_with_ampersand_access(String::from("ret"), 3 /* depth arg  */);
+                            i = self.insert_into_block(i, userdef_record_ret, body);
+                        } else {
+                            let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
+                            i = self.insert_into_block(i, userdef_record_ret, body);
+                        }
                     }
                     BasicType::PrimVec(_p_type) => {}
                     BasicType::UserDefVec => {}
@@ -495,7 +572,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                 // remove old return stmt
                 body.stmts.remove(i); // will want to println! this to debug
             }
-            _ => {}
+            _ => { return i+1; }
         }
         i
     }
@@ -568,13 +645,32 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                 None => panic!("Field has no identifier")
             };
 
+            let mut is_ref = false;
             let mut dtrace_field_rec =
-                match &get_basic_type(&fields[i].ty.kind) {
+                match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                     BasicType::Prim(p_type) => {
-                        build_field_prim(p_type.clone(), field_name.clone())
+                        if p_type == "String" {
+                            build_prim_field_tostring(p_type.clone(), field_name.clone())
+                        } else if is_ref {
+                            build_field_prim_ref(p_type.clone(), field_name.clone())
+                        } else {
+                            build_field_prim(p_type.clone(), field_name.clone())
+                        }
+                        // if !is_ref && p_type == "String" {
+                        //     build_field_prim_with_clone_access(p_type.clone(), field_name.clone())
+                        // } else if is_ref && p_type != "String" {
+                        //     // pointer
+                        //     build_plain_pointer_field(field_name.clone())
+                        // } else {
+                        //     build_field_prim(p_type.clone(), field_name.clone())
+                        // }
                     }
                     BasicType::UserDef => {
-                        build_field_userdef(field_name.clone())
+                        if !is_ref {
+                            build_field_userdef_with_ampersand_access(field_name.clone())
+                        } else {
+                            build_field_userdef(field_name.clone())
+                        }
                     }
                     BasicType::PrimVec(_p_type) => { String::from("") }
                     BasicType::UserDefVec => { String::from("") }
@@ -611,13 +707,33 @@ impl<'a> DaikonImplInserterVisitor<'a> {
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
         while i < decl.inputs.len() {
 
+            let mut is_ref = false;
             let mut dtrace_rec =
-                match &get_basic_type(&decl.inputs[i].ty.kind) {
+                match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
                     BasicType::Prim(p_type) => {
-                        build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                        if p_type == "String" {
+                            build_prim_with_tostring(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                        } else if is_ref {
+                            build_prim_ref(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                        } else {
+                            build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                        }
+                        // if !is_ref && p_type == "String" {
+                        //     build_prim_with_clone_access(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                        // } else if is_ref && p_type != "String" {
+                        //     // pointer
+                        //     build_plain_pointer(get_param_ident(&decl.inputs[i].pat))
+                        // } else { // basic case? &str might be messed up
+                        //     build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                        // }
                     }
                     BasicType::UserDef => {
-                        build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
+                        if !is_ref {
+                            build_userdef_with_ampersand_access(get_param_ident(&decl.inputs[i].pat),
+                                                                3 /* depth_arg  */)
+                        } else {
+                            build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
+                        }
                     }
                     BasicType::PrimVec(_p_type) => { String::from("") }
                     BasicType::UserDefVec => { String::from("") }
@@ -643,6 +759,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                   dtrace_param_blocks: &mut Vec<String>,
                   param_to_block_idx: &HashMap<String, i32>,
                   ret_ty: &BasicType,
+                  ret_is_ref: &bool,
                   exit_counter: &mut usize) {
         let mut i = 0;
 
@@ -654,7 +771,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                ppt_name.clone(),
                                dtrace_param_blocks,
                                &param_to_block_idx,
-                               &ret_ty) // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
+                               &ret_ty,
+                               &ret_is_ref); // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
         }
     }
 
@@ -674,7 +792,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     body: &mut P<Block>,
                     dtrace_param_blocks: &mut Vec<String>,
                     param_to_block_idx: HashMap<String, i32>,
-                    ret_ty: &BasicType) { // arg_dtraces: String,
+                    ret_ty: &BasicType,
+                    ret_is_ref: &bool) { // arg_dtraces: String,
         //let original_len = body.stmts.len();
         let mut i = 0;
         let entry = build_entry(ppt_name.clone());
@@ -708,7 +827,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                ppt_name.clone(),
                                dtrace_param_blocks,
                                &param_to_block_idx,
-                               &ret_ty) // match on Semi mainly for now, find return <expr>; and add an exit point.
+                               &ret_ty,
+                               &ret_is_ref) // match on Semi mainly for now, find return <expr>; and add an exit point.
         }
 
     }
@@ -728,7 +848,7 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
     */
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &mut fk {
-            FnKind::Fn(_ctxt, _vis, f) => {
+            FnKind::Fn(_, _, f) => {
                 // nonce counter (move to function)
                 let ppt_name = String::from(f.ident.as_str());
                 match &self.parser.parse_items_from_string(build_nonce_counter(ppt_name.clone())) {
@@ -743,9 +863,10 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                 // get block of dtrace chunks -- one for each param
                 let mut dtrace_param_blocks = self.grok_fn_sig(&f.sig.decl);
                 let param_to_block_idx = map_params(&f.sig.decl);
+                let mut is_ref = false;
                 let ret_ty = match &f.sig.decl.output {
                     FnRetTy::Default(_span) => BasicType::NoRet,
-                    FnRetTy::Ty(ty) => get_basic_type(&ty.kind)
+                    FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut is_ref)
                 };
                 match &mut f.body {
                     None => {} // add all trace records up front
@@ -757,7 +878,8 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                                           body,
                                           &mut dtrace_param_blocks,
                                           param_to_block_idx,
-                                          &ret_ty);
+                                          &ret_ty,
+                                          &is_ref);
                     }
                 }
             }
@@ -800,7 +922,7 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
     }
 }
 
-static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
 impl<'a> Parser<'a> {

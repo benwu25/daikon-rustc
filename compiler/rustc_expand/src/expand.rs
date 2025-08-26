@@ -3,7 +3,21 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::{iter, mem};
 
-// use std::collections::HashMap;
+use std::collections::HashMap;
+use std::io::Write;
+use rustc_ast::{
+    Item, VariantData, FnRetTy,
+    FnDecl, Block, Path, GenericArgs,
+    AngleBracketedArg, GenericArg
+};
+use rustc_ast::visit::FnKind;
+use rustc_parse::parser::item::DO_VISITOR;
+use rustc_parse::parser::daikon_strs::{
+    I8, I16, I32, I64, I128, ISIZE,
+    U8, U16, U32, U64, U128, USIZE,
+    F32, F64, CHAR, BOOL, UNIT, STR,
+    STRING, VEC
+};
 
 use rustc_ast::mut_visit::*;
 use rustc_ast::ptr::P;
@@ -12,7 +26,7 @@ use rustc_ast::visit::{self, AssocCtxt, Visitor, VisitorResult, try_visit, walk_
 use rustc_ast::{
     self as ast, AssocItemKind, AstNodeWrapper, AttrArgs, AttrStyle, AttrVec, DUMMY_NODE_ID,
     ExprKind, ForeignItemKind, HasAttrs, HasNodeId, Inline, ItemKind, MacStmtStyle, MetaItemInner,
-    MetaItemKind, ModKind, NodeId, PatKind, StmtKind, TyKind, token,
+    MetaItemKind, ModKind, NodeId, PatKind, StmtKind, TyKind, token
 };
 use rustc_ast_pretty::pprust;
 use rustc_attr_parsing::{EvalConfigResult, ShouldEmit};
@@ -456,45 +470,267 @@ impl Invocation {
     }
 }
 
+#[allow(dead_code)]
+#[derive(PartialEq)]
+enum BasicType {
+    Prim(String),
+    UserDef,
+    PrimVec(String),
+    UserDefVec,
+    PrimArray(String),
+    UserDefArray,
+    NoRet,
+    Error,
+}
+
+// fn get_param_ident(pat: &P<Pat>) -> String {
+//     match &pat.kind {
+//         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
+//         _ => panic!("Formal arg does not have simple identifier"),
+//     }
+// }
+
+fn check_prim(ty_str: &str) -> BasicType {
+    if ty_str == I8 {
+        return BasicType::Prim(String::from(I8));
+    } else if ty_str == I16 {
+        return BasicType::Prim(String::from(I16));
+    } else if ty_str == I32 {
+        return BasicType::Prim(String::from(I32));
+    } else if ty_str == I64 {
+        return BasicType::Prim(String::from(I64));
+    } else if ty_str == I128 {
+        return BasicType::Prim(String::from(I128));
+    } else if ty_str == ISIZE {
+        return BasicType::Prim(String::from(ISIZE));
+    } else if ty_str == U8 {
+        return BasicType::Prim(String::from(U8));
+    } else if ty_str == U16 {
+        return BasicType::Prim(String::from(U16));
+    } else if ty_str == U32 {
+        return BasicType::Prim(String::from(U32));
+    } else if ty_str == U64 {
+        return BasicType::Prim(String::from(U64));
+    } else if ty_str == U128 {
+        return BasicType::Prim(String::from(U128));
+    } else if ty_str == USIZE {
+        return BasicType::Prim(String::from(USIZE));
+    } else if ty_str == F32 {
+        return BasicType::Prim(String::from(F32));
+    } else if ty_str == F64 {
+        return BasicType::Prim(String::from(F64));
+    } else if ty_str == CHAR {
+        return BasicType::Prim(String::from(CHAR));
+    } else if ty_str == BOOL {
+        return BasicType::Prim(String::from(BOOL));
+    } else if ty_str == UNIT {
+        return BasicType::Prim(String::from(UNIT));
+    } else if ty_str == STR {
+        return BasicType::Prim(String::from(STR));
+    } else if ty_str == STRING {
+        return BasicType::Prim(String::from(STRING));
+    }
+    BasicType::Error
+}
+
+// is Vec with > 1 arg meaningful?
+fn grok_vec_args(path: &Path) -> BasicType {
+    match &path.segments[path.segments.len() - 1].args {
+        None => BasicType::Error,
+        Some(args) => match &**args {
+            GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
+                AngleBracketedArg::Arg(arg) => match &arg {
+                    GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind) {
+                        BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
+                        BasicType::UserDef => BasicType::UserDefVec,
+                        _ => BasicType::Error,
+                    },
+                    _ => BasicType::Error,
+                },
+                _ => BasicType::Error,
+            },
+            _ => BasicType::Error,
+        },
+    }
+}
+
+// NOTE: don't care about is_ref?
+fn get_basic_type(kind: &TyKind) -> BasicType {
+    match &kind {
+        TyKind::Array(_arr_type, _anon_const) => BasicType::Error,
+        TyKind::Ptr(_mut_ty) => BasicType::Error,
+        TyKind::Ref(_, mut_ty) => {
+            // use recursion to get to the underlying type
+            // :O very scary scary
+            get_basic_type(&mut_ty.ty.kind)
+        },
+        TyKind::Path(_, path) => {
+            if path.segments.len() == 0 {
+                panic!("Path has no type");
+            }
+            let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
+            let try_prim = check_prim(ty_string);
+            if try_prim != BasicType::Error {
+                return try_prim;
+            }
+            if ty_string == VEC {
+                return grok_vec_args(&path);
+            }
+            BasicType::UserDef
+        },
+        _ => BasicType::Error,
+    }
+}
+
+// not sure if this is the way to track nonsense records.
+
 // #[allow(rustc::default_hash_types)]
-// struct DeclsHashMapBuilder<'a> {
-//     pub map: &'a mut HashMap<Ident, P<Item>>,
-// }
-
-// impl<'a> Visitor for DeclsHashMapBuilder<'a> {
-//     fn visit_item(&mut self, item: &Item) {
-//         /*
-//             TODO: match with structs, enums, and unions.
-//                   Nested declarations will also be visited
-//                   recursively, so don't worry about that here.
-//         */
-//         let get_struct = pprust::item_to_string(&item);
-//         match &item.kind {
-//             ItemKind::Struct(_ident, generics, variant_data) => {
-//                 match variant_data {
-//                     VariantData::Struct { fields, recovered: _recovered } => {
-//                         self.map.insert(ident.clone(), item.clone());
-//                     }
-//                     VariantData::Tuple(_, _) => {}
-//                     _ => {}
-//                 }
-//             }
-//             _ => {}
-//         }
-
-//         mut_visit::walk_item(self, item);
+// fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
+//     let mut res = HashMap::new();
+//     let mut i = 0;
+//     while i < decl.inputs.len() {
+//         res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
+//         i += 1;
 //     }
+//     res
 // }
 
-// struct DaikonDeclsVisitor<'a> {
-//     pub map: &'a HashMap<String, P<Item>>,
-// }
+#[allow(rustc::default_hash_types)]
+struct DeclsHashMapBuilder<'a> {
+    pub map: &'a mut HashMap<Ident, P<Item>>,
+}
 
-// impl<'a> Visitor for DaikonDeclsVisitor<'a> {
-//     fn visit_fn_decl(&mut self, decl: &'a FnDecl) {
+impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
+    fn visit_item(&mut self, item: &'a Item) {
+        match &item.kind {
+            ItemKind::Struct(ident, _, variant_data) => {
+                match variant_data {
+                    VariantData::Struct { fields: _, recovered: _ } => {
+                        self.map.insert(ident.clone(), Box::new(item.clone()));
+                    }
+                    VariantData::Tuple(_, _) => {}
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
 
-//     }
-// }
+        visit::walk_item(self, item);
+    }
+}
+
+#[allow(rustc::default_hash_types)]
+struct DaikonDeclsVisitor<'a> {
+    pub _map: &'a HashMap<Ident, P<Item>>,
+    pub decls: &'a mut std::fs::File,
+}
+
+impl<'a> DaikonDeclsVisitor<'a> {
+    fn write_entry(&mut self,
+                   ppt_name: String) {
+        writeln!(self.decls, "ppt {}:::ENTER", ppt_name).ok();
+        writeln!(self.decls, "ppt-type enter").ok();
+    }
+
+    // fn write_exit(&mut self,
+    //               ppt_name: String,
+    //               exit_counter: usize) {
+    //     writeln!(self.decls, "ppt {}:::EXIT{}", ppt_name, exit_counter.to_string()).ok();
+    //     writeln!(self.decls, "ppt-type exit").ok();
+    // }
+
+    // fn write_var(&mut self,
+    //              var_name: String,
+    //              dec_type: String,
+    //              rep_type: String) {
+    //     writeln!(self.decls, "variable {}", var_name).ok();
+    //     writeln!(self.decls, "  var-kind variable").ok();
+    //     writeln!(self.decls, "  dec-type {}", dec_type).ok();
+    //     writeln!(self.decls, "  rep-type {}", rep_type).ok();
+    //     writeln!(self.decls, "  flags is_param").ok();
+    //     writeln!(self.decls, "  comparability -1").ok();
+    // }
+
+    // fn write_field_var(&mut self,
+    //                    var_name: String,
+    //                    enclosing_var: String,
+    //                    field_name: String,
+    //                    dec_type: String,
+    //                    rep_type: String) {
+    //     writeln!(self.decls, "variable {}", var_name).ok();
+    //     writeln!(self.decls, "  var-kind field {}", field_name).ok();
+    //     writeln!(self.decls, "  enclosing-var {}", enclosing_var).ok();
+    //     writeln!(self.decls, "  dec-type {}", dec_type).ok();
+    //     writeln!(self.decls, "  rep-type {}", rep_type).ok();
+    //     writeln!(self.decls, "  comparability -1").ok();
+    // }
+
+    // fn write_array_contents(&mut self,
+    //                         arr_name: String,
+    //                         arr_type: String) {
+    //     writeln!(self.decls, "variable {}[..]", arr_name).ok();
+    //     writeln!(self.decls, "  var-kind array").ok();
+    //     writeln!(self.decls, "  enclosing-var {}", arr_name).ok();
+    //     writeln!(self.decls, "  array 1").ok();
+    //     writeln!(self.decls, "  dec-type {}[]", arr_type).ok();
+    //     writeln!(self.decls, "  rep-type {}[]", arr_type).ok();
+    //     writeln!(self.decls, "  comparability -1").ok();
+    // }
+
+    fn grok_fn_sig(&mut self, _decl: &P<FnDecl>) {
+        // let mut i = 0;
+        // while i < decl.inputs.len() {
+        //     match &get_basic_type(&decl.inputs[i].ty.kind) {
+        //         BasicType::Prim(p_type) => {
+
+        //         }
+        //         BasicType::UserDef => {
+        //             // query map
+
+        //         }
+        //         BasicType::PrimVec(_p_type) => {}
+        //         BasicType::UserDefVec => {}
+        //         BasicType::PrimArray(_p_type) => {}
+        //         BasicType::UserDefArray => {}
+        //         BasicType::NoRet => {}
+        //         BasicType::Error => panic!("Formal arg type cannot be declared")
+        //     }
+        // }
+    }
+
+    // need some state to remember declarations you wrote for entry?
+    fn grok_fn_body(&mut self, _body: &P<Block>, _ret_ty: &BasicType) {
+
+    }
+}
+
+impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
+    fn visit_fn(&mut self, fk: FnKind<'a>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
+        match &fk {
+            FnKind::Fn(_, _, f) => {
+                if !f.ident.as_str().starts_with("dtrace") {
+                    let ppt_name = String::from(f.ident.as_str());
+                    self.write_entry(ppt_name.clone());
+                    self.grok_fn_sig(&f.sig.decl);
+                    let ret_ty = match &f.sig.decl.output {
+                        FnRetTy::Default(_) => BasicType::NoRet,
+                        FnRetTy::Ty(ty) => get_basic_type(&ty.kind)
+                    };
+                    match &f.body {
+                        None => {}
+                        Some(body) => {
+                            // By now, all exit ppts are
+                            // explicit Semi(Ret) stmts.
+                            self.grok_fn_body(body, &ret_ty);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        visit::walk_fn(self, fk);
+    }
+}
 
 pub struct MacroExpander<'a, 'b> {
     pub cx: &'a mut ExtCtxt<'b>,
@@ -506,6 +742,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         MacroExpander { cx, monotonic }
     }
 
+    #[allow(rustc::default_hash_types)]
     pub fn expand_crate(&mut self, krate: ast::Crate) -> ast::Crate {
         let file_path = match self.cx.source_map().span_to_filename(krate.spans.inner_span) {
             FileName::Real(name) => name
@@ -522,13 +759,33 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         });
         let krate = self.fully_expand_fragment(AstFragment::Crate(krate)).make_crate();
         // decls
-        // pass through entire krate building HashMap<String, P<Item>> (ItemKind::Struct always)
-        // open dtrace/decls files for writing
+        // pass through entire krate building HashMap<String, P<Item>> (ItemKind::Struct always)  (ok)
+        // create dtrace file and open decls files for writing  (ok, overwriting is done)
         // apply normal Visitor (non-mutable) and visit fns only, skipping over generated stuff we added
-        // use HashMap to write ppt-enter at each fn
+        // write ppt-enter at each fn
         // step through the function similar to item.rs to find all return ret;, and write ppt-exit.
         //   (this re-does some work of counting exit points and finding drop() calls or other invalidations, but eh..)
-        // let mut struct_map: HashMap<String, P<Item>> = HashMap::new();
+        if *DO_VISITOR.lock().unwrap() {
+            let mut struct_map: HashMap<Ident, P<Item>> = HashMap::new();
+            let mut map_builder = DeclsHashMapBuilder { map: &mut struct_map };
+            map_builder.visit_crate(&krate);
+
+            // create or overwrite main.decls and main.dtrace
+            match std::fs::File::create("main.decls") {
+                Err(why) => panic!("couldn't create main.decls, {}", why),
+                _ => {}
+            }
+            match std::fs::File::create("main.dtrace") {
+                Err(why) => panic!("couldn't create main.dtrace, {}", why),
+                _ => {}
+            }
+            let mut decls = match std::fs::File::options().append(true).open("main.decls") {
+                Err(why) => panic!("Daikon couldn't open file, {}", why),
+                Ok(decls) => decls,
+            };
+            let mut decls_visitor = DaikonDeclsVisitor { _map: &struct_map, decls: &mut decls };
+            decls_visitor.visit_crate(&krate);
+        }
 
 
         // println!("\n\n\ncrate:\n\n{}", pprust::crate_to_string_for_macros(&krate));

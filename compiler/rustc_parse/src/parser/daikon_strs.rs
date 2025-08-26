@@ -11,29 +11,29 @@
 // String
 // Vec
 // more to come?
-pub(crate) static I8: &str = "i8";
-pub(crate) static I16: &str = "i16";
-pub(crate) static I32: &str = "i32";
-pub(crate) static I64: &str = "i64";
-pub(crate) static I128: &str = "i128";
-pub(crate) static ISIZE: &str = "isize";
+pub static I8: &str = "i8";
+pub static I16: &str = "i16";
+pub static I32: &str = "i32";
+pub static I64: &str = "i64";
+pub static I128: &str = "i128";
+pub static ISIZE: &str = "isize";
 
-pub(crate) static U8: &str = "u8";
-pub(crate) static U16: &str = "u16";
-pub(crate) static U32: &str = "u32";
-pub(crate) static U64: &str = "u64";
-pub(crate) static U128: &str = "u128";
-pub(crate) static USIZE: &str = "usize";
+pub static U8: &str = "u8";
+pub static U16: &str = "u16";
+pub static U32: &str = "u32";
+pub static U64: &str = "u64";
+pub static U128: &str = "u128";
+pub static USIZE: &str = "usize";
 
-pub(crate) static F32: &str = "f32";
-pub(crate) static F64: &str = "f64";
+pub static F32: &str = "f32";
+pub static F64: &str = "f64";
 
-pub(crate) static CHAR: &str = "char";
-pub(crate) static BOOL: &str = "bool";
-pub(crate) static UNIT: &str = "()";
-pub(crate) static STR: &str = "str";
-pub(crate) static STRING: &str = "String";
-pub(crate) static VEC: &str = "Vec";
+pub static CHAR: &str = "char";
+pub static BOOL: &str = "bool";
+pub static UNIT: &str = "()";
+pub static STR: &str = "str";
+pub static STRING: &str = "String";
+pub static VEC: &str = "Vec";
 
 // placeholders are between the strs
 
@@ -88,6 +88,80 @@ pub(crate) fn build_prim(p_type: String, var_name: String) -> String {
     res
 }
 
+pub(crate) static DTRACE_PRIM_REF: [&str; 5] = ["fn __skip() { dtrace_print_prim::<",
+                                               ">(",
+                                               "::from_str(&",
+                                               ".to_string()).expect(\"Ok\"), String::from(\"",
+                                               "\")); }"];
+pub(crate) fn build_prim_ref(p_type: String, var_name: String) -> String {
+    let mut res = String::from(DTRACE_PRIM_REF[0]);
+    res.push_str(&p_type);
+    res.push_str(DTRACE_PRIM_REF[1]);
+    res.push_str(&p_type);
+    res.push_str(DTRACE_PRIM_REF[2]);
+    res.push_str(&var_name);
+    res.push_str(DTRACE_PRIM_REF[3]);
+    res.push_str(&var_name);
+    res.push_str(DTRACE_PRIM_REF[4]);
+    res
+}
+
+// pub(crate) static DTRACE_PLAIN_POINTER: [&str; 3] = ["fn __skip() { dtrace_print_pointer(",
+//                                                      " as *const _ as usize, String::from(\"",
+//                                                      "\")); }"];
+// pub(crate) fn build_plain_pointer(var_name: String) -> String {
+//     let mut res = String::from(DTRACE_PLAIN_POINTER[0]);
+//     res.push_str(&var_name);
+//     res.push_str(DTRACE_PLAIN_POINTER[1]);
+//     res.push_str(&var_name);
+//     res.push_str(DTRACE_PLAIN_POINTER[2]);
+//     res
+// }
+
+// pub(crate) static DTRACE_PLAIN_POINTER_FIELD: [&str; 3] = ["fn __skip() { dtrace_print_pointer(self.",
+//                                                                 " as *const _ as usize, format!(\"{}{}\", prefix, \".",
+//                                                                 "\")); }"];
+// pub(crate) fn build_plain_pointer_field(field_name: String) -> String {
+//     let mut res = String::from(DTRACE_PLAIN_POINTER_FIELD[0]);
+//     res.push_str(&field_name);
+//     res.push_str(DTRACE_PLAIN_POINTER_FIELD[1]);
+//     res.push_str(&field_name);
+//     res.push_str(DTRACE_PLAIN_POINTER_FIELD[2]);
+//     res
+// }
+
+pub(crate) static DTRACE_PRIM_TOSTRING: [&str; 4] = ["fn __skip() { dtrace_print_prim::<",
+                                            ">(",
+                                            ".to_string(), String::from(\"",
+                                            "\")); }"];
+pub(crate) fn build_prim_with_tostring(p_type: String, var_name: String) -> String { // TODO: change name
+    let mut res = String::from(DTRACE_PRIM_TOSTRING[0]);
+    res.push_str(&p_type);
+    res.push_str(DTRACE_PRIM_TOSTRING[1]);
+    res.push_str(&var_name);
+    res.push_str(DTRACE_PRIM_TOSTRING[2]);
+    res.push_str(&var_name);
+    res.push_str(DTRACE_PRIM_TOSTRING[3]);
+    res
+}
+
+pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: [&str; 4] = ["dtrace_print_prim::<",
+                                                           ">(self.",
+                                                           ".to_string(), format!(\"{}{}\", prefix, \".",
+                                                           "\"));"];
+pub(crate) fn build_prim_field_tostring(p_type: String, field_name: String) -> String {
+    let mut res = String::from(DTRACE_PRIM_FIELD_TOSTRING[0]);
+    res.push_str(&p_type);
+    res.push_str(DTRACE_PRIM_FIELD_TOSTRING[1]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRIM_FIELD_TOSTRING[2]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRIM_FIELD_TOSTRING[3]);
+    res
+}
+
+// pub(crate) fn build_prim_with_to_string
+
 pub(crate) static DTRACE_PRIM_STRUCT: [&str; 4] = ["dtrace_print_prim::<",
                                                   ">(self.",
                                                   ", format!(\"{}{}\", prefix, \".",
@@ -103,6 +177,41 @@ pub(crate) fn build_field_prim(p_type: String, field_name: String) -> String {
     res
 }
 
+// TODO: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
+//       to satisfy dtrace_print_prim_vec<T>(v: &Vec<T>).
+pub(crate) static DTRACE_PRIM_REF_STRUCT: [&str; 5] = ["dtrace_print_prim::<",
+                                                       ">(",
+                                                       "::from_str(&self.",
+                                                       ".to_string()).expect(\"Ok\"), format!(\"{}{}\", prefix, \".",
+                                                       "\"));"];
+pub(crate) fn build_field_prim_ref(p_type: String, field_name: String) -> String {
+    let mut res = String::from(DTRACE_PRIM_REF_STRUCT[0]);
+    res.push_str(&p_type);
+    res.push_str(DTRACE_PRIM_REF_STRUCT[1]);
+    res.push_str(&p_type);
+    res.push_str(DTRACE_PRIM_REF_STRUCT[2]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRIM_REF_STRUCT[3]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRIM_REF_STRUCT[4]);
+    res
+}
+
+// pub(crate) static DTRACE_PRIM_STRUCT_CLONE: [&str; 4] = ["dtrace_print_prim::<",
+//                                                   ">(self.",
+//                                                   ", format!(\"{}{}\", prefix, \".",
+//                                                   "\"));"];
+// pub(crate) fn build_field_prim_with_clone_access(p_type: String, field_name: String) -> String { // TODO: change name
+//     let mut res = String::from(DTRACE_PRIM_STRUCT_CLONE[0]);
+//     res.push_str(&p_type);
+//     res.push_str(DTRACE_PRIM_STRUCT_CLONE[1]);
+//     res.push_str(&format!("{}.clone()", field_name));
+//     res.push_str(DTRACE_PRIM_STRUCT_CLONE[2]);
+//     res.push_str(&field_name);
+//     res.push_str(DTRACE_PRIM_STRUCT_CLONE[3]);
+//     res
+// }
+
 pub(crate) static DTRACE_USERDEF: [&str; 6] = ["fn __skip() { dtrace_print_pointer(",
                                                " as *const _ as usize, String::from(\"",
                                                "\"));\n",
@@ -112,6 +221,21 @@ pub(crate) static DTRACE_USERDEF: [&str; 6] = ["fn __skip() { dtrace_print_point
 pub(crate) fn build_userdef(var_name: String, depth_arg: i32) -> String {
     let mut res = String::from(DTRACE_USERDEF[0]);
     res.push_str(&var_name);
+    res.push_str(DTRACE_USERDEF[1]);
+    res.push_str(&var_name);
+    res.push_str(DTRACE_USERDEF[2]);
+    res.push_str(&var_name);
+    res.push_str(DTRACE_USERDEF[3]);
+    res.push_str(&String::from(depth_arg.to_string()));
+    res.push_str(DTRACE_USERDEF[4]);
+    res.push_str(&var_name);
+    res.push_str(DTRACE_USERDEF[5]);
+    res
+}
+
+pub(crate) fn build_userdef_with_ampersand_access(var_name: String, depth_arg: i32) -> String {
+    let mut res = String::from(DTRACE_USERDEF[0]);
+    res.push_str(&format!("&{}", var_name));
     res.push_str(DTRACE_USERDEF[1]);
     res.push_str(&var_name);
     res.push_str(DTRACE_USERDEF[2]);
@@ -139,6 +263,24 @@ pub(crate) fn build_field_userdef(field_name: String) -> String {
     res.push_str(DTRACE_USERDEF_STRUCT[3]);
     res.push_str(&field_name);
     res.push_str(DTRACE_USERDEF_STRUCT[4]);
+    res
+}
+
+pub(crate) static DTRACE_USERDEF_STRUCT_AMPERSAND: [&str; 5] = ["dtrace_print_pointer(&self.",
+                                                      " as *const _ as usize, format!(\"{}{}\", prefix, \".",
+                                                      "\"));\nself.",
+                                                      ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
+                                                      "\"));"];
+pub(crate) fn build_field_userdef_with_ampersand_access(field_name: String) -> String {
+    let mut res = String::from(DTRACE_USERDEF_STRUCT_AMPERSAND[0]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT_AMPERSAND[1]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT_AMPERSAND[2]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT_AMPERSAND[3]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_USERDEF_STRUCT_AMPERSAND[4]);
     res
 }
 
@@ -199,7 +341,7 @@ pub(crate) fn build_nonce_counter(ppt_name: String) -> String {
     res
 }
 
-pub(crate) static IMPORTS: &str = "use std::fs::File;\nuse std::io::prelude::*;\nuse std::sync::{LazyLock, Mutex};\n";
+pub(crate) static IMPORTS: &str = "use std::fs::File;\nuse std::io::prelude::*;\nuse std::sync::{LazyLock, Mutex};\nuse std::str::FromStr;";
 pub(crate) fn build_imports() -> String {
     String::from(IMPORTS)
 }
