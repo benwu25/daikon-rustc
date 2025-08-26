@@ -4,12 +4,14 @@ use std::sync::Arc;
 use std::{iter, mem};
 
 use std::collections::HashMap;
+use thin_vec::ThinVec;
 use std::io::Write;
 #[allow(unused_imports)]
 use rustc_ast::{
     Item, VariantData, FnRetTy,
     FnDecl, Block, Path, GenericArgs,
-    AngleBracketedArg, GenericArg, Pat
+    AngleBracketedArg, GenericArg, Pat,
+    FieldDef,
 };
 use rustc_ast::visit::FnKind;
 use rustc_parse::parser::item::DO_VISITOR;
@@ -657,7 +659,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool, raw_type: &mut String) -> Stri
 
 #[allow(rustc::default_hash_types)]
 struct DeclsHashMapBuilder<'a> {
-    pub map: &'a mut HashMap<Ident, P<Item>>,
+    pub map: &'a mut HashMap<String, P<Item>>,
 }
 
 impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
@@ -666,7 +668,7 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
             ItemKind::Struct(ident, _, variant_data) => {
                 match variant_data {
                     VariantData::Struct { fields: _, recovered: _ } => {
-                        self.map.insert(ident.clone(), Box::new(item.clone()));
+                        self.map.insert(String::from(ident.as_str()), Box::new(item.clone()));
                     }
                     VariantData::Tuple(_, _) => {}
                     _ => {}
@@ -679,6 +681,13 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
     }
 }
 
+#[allow(rustc::default_hash_types)]
+struct DaikonDeclsVisitor<'a> {
+    pub map: &'a HashMap<String, P<Item>>,
+    pub decls: &'a mut std::fs::File,
+    pub depth_limit: u32,
+}
+
 #[allow(dead_code)]
 enum DeclCode {
     Field,
@@ -687,21 +696,78 @@ enum DeclCode {
 }
 
 #[allow(dead_code)]
-struct VarDecl {
+#[allow(rustc::default_hash_types)]
+struct VarDecl<'a> {
+    map: &'a HashMap<String, P<Item>>,
     var_name: String,
     dec_type: String,
     rep_type: String,
     code: DeclCode,
-    subvars: Vec<VarDecl>,
+    subvars: Vec<VarDecl<'a>>,
 }
 
-#[allow(rustc::default_hash_types)]
-struct DaikonDeclsVisitor<'a> {
-    pub _map: &'a HashMap<Ident, P<Item>>,
-    pub decls: &'a mut std::fs::File,
+impl<'a> VarDecl<'a> {
+    #[allow(dead_code)]
+    fn write(&self) {
+        // TODO: write this decl and children
+    }
+
+    fn get_fields(&self) -> ThinVec<FieldDef> {
+        let struct_item = self.map.get(&self.dec_type);
+        match &struct_item {
+            None => panic!("struct dec type not found"),
+            Some(struct_item) => match &struct_item.kind {
+                ItemKind::Struct(_, _, variant_data) => match variant_data {
+                    VariantData::Struct { fields, recovered: _ } => {
+                        fields.clone()
+                    }
+                    _ => panic!("struct dec type is not a struct 1")
+                }
+                _ => panic!("struct dec type is not a struct 2")
+            }
+        }
+    }
+
+    fn build_field_decls(&self, depth_limit: u32) {
+        if depth_limit == 0 {
+            return;
+        }
+
+        let fields = self.get_fields();
+        let mut i = 0;
+
+        // push to subvars
+        // don't forget to declare the pointer at this level
+        // for struct fields.
+        while i < fields.len() {
+            let _field_name = match &fields[i].ident {
+                Some(field_ident) => String::from(field_ident.as_str()),
+                None => panic!("Field has no identifier")
+            };
+
+            let mut is_ref = false;
+
+            let mut raw_type = String::from("");
+            let rep_type = get_rep_type(&fields[i].ty.kind, &mut is_ref, &mut raw_type);
+            let _dec_type =
+                if is_java_type(&rep_type) {
+                    rep_type.clone()
+                } else if rep_type == "hashcode" {
+                    raw_type.clone() // keep the struct name to lookup when writing this var decl,
+                } else {             // do the same for nested structs.
+                    String::from("<decl>") // 
+                };
+
+            // what kind of value is this: to set VarDecl::code field, to know what function to recurse with
+        
+        
+            i += 1;
+        }
+    }
 }
 
 impl<'a> DaikonDeclsVisitor<'a> {
+
     fn write_entry(&mut self,
                    ppt_name: String) {
         writeln!(self.decls, "ppt {}:::ENTER", ppt_name).ok();
@@ -751,11 +817,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
     //     writeln!(self.decls, "  comparability -1").ok();
     // }
 
-    fn grok_fn_sig(&mut self, decl: &P<FnDecl>) -> Vec<VarDecl> {
-        let mut var_decls: Vec<VarDecl> = Vec::new();
+    fn grok_fn_sig(&mut self, decl: &P<FnDecl>) -> Vec<VarDecl<'_>> {
+        let mut var_decls: Vec<VarDecl<'_>> = Vec::new();
         let mut i = 0;
         while i < decl.inputs.len() {
 
+            // is this important for the declaration? for ptr vs value?
             let mut is_ref = false;
 
             let mut raw_type = String::from("");
@@ -771,6 +838,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
 
             let var_decl =
                 VarDecl {
+                    map: self.map,
                     var_name: get_param_ident(&decl.inputs[i].pat),
                     dec_type: dec_type,
                     rep_type: rep_type,
@@ -779,10 +847,11 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 };
             if var_decl.rep_type == "hashcode" {
                 // query map to recursively build this decl's children
-
+                var_decl.build_field_decls(self.depth_limit);
             } // else if var_decl.rep_type == "hashcode[]" {
-            // more cases?
+
             // } else if var_decl.rep_type == "int[]"
+            // You'll need to handle array content separately?
 
             var_decls.push(var_decl);
             i += 1;
@@ -864,7 +933,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
         // step through the function similar to item.rs to find all return ret;, and write ppt-exit.
         //   (this re-does some work of counting exit points and finding drop() calls or other invalidations, but eh..)
         if *DO_VISITOR.lock().unwrap() {
-            let mut struct_map: HashMap<Ident, P<Item>> = HashMap::new();
+            let mut struct_map: HashMap<String, P<Item>> = HashMap::new();
             let mut map_builder = DeclsHashMapBuilder { map: &mut struct_map };
             map_builder.visit_crate(&krate);
 
@@ -881,7 +950,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                 Err(why) => panic!("Daikon couldn't open file, {}", why),
                 Ok(decls) => decls,
             };
-            let mut decls_visitor = DaikonDeclsVisitor { _map: &struct_map, decls: &mut decls };
+            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, decls: &mut decls, depth_limit: 3 };
             decls_visitor.visit_crate(&krate);
         }
 
