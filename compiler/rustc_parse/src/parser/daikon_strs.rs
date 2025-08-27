@@ -333,12 +333,17 @@ pub(crate) fn build_void_return() -> String {
 }
 
 pub(crate) static NONCE_COUNTER: [&str; 2] = ["static ",
-                                              "_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(1));"];
+                                              "_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));"];
 pub(crate) fn build_nonce_counter(ppt_name: String) -> String {
     let mut res = String::from(NONCE_COUNTER[0]);
     res.push_str(&ppt_name.to_uppercase());
     res.push_str(NONCE_COUNTER[1]);
     res
+}
+
+pub(crate) static DTRACE_NEWLINE: &str = "fn __skip() { dtrace_newline(); }";
+pub(crate) fn dtrace_newline() -> String {
+    String::from(DTRACE_NEWLINE)
 }
 
 pub(crate) static IMPORTS: &str = "use std::fs::File;\nuse std::io::prelude::*;\nuse std::sync::{LazyLock, Mutex};\nuse std::str::FromStr;";

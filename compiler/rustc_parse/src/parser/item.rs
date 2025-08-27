@@ -20,7 +20,7 @@ use crate::parser::daikon_strs::{
     build_userdef_with_ampersand_access,
     build_field_userdef_with_ampersand_access,
     build_field_prim_ref, build_prim_field_tostring,
-    build_prim_ref, build_prim_with_tostring
+    build_prim_ref, build_prim_with_tostring, dtrace_newline
 };
 
 use ast::token::IdentIsRaw;
@@ -61,11 +61,7 @@ struct DaikonImplInserterVisitor<'a> {
     pub mod_items: &'a mut ThinVec<P<Item>>,
 }
 
-// call generation subroutines?
-// get_dtrace_block_with_ident_placeholders(type: String/enum) -> Vec<String>
-// sub_placeholders_with_ident(ident: String, placeholders: Vec<String>) -> String
-
-// very coarse-grained categories we will crunch types into for Daikon to munch\
+// TODO: add String payloads to UserDefVec & UserDefArray so you can call X::dtrace_print_fields() on a param with type X.
 #[allow(dead_code)]
 #[derive(PartialEq)]
 enum BasicType {
@@ -152,8 +148,6 @@ fn grok_vec_args(path: &Path) -> BasicType {
 }
 
 fn splice_struct(pp_struct: &String) -> String {
-    // forgot pub struct X ..., causes ICE.
-    // TODO: handle pub struct
     let start_idx = pp_struct.find(" ");
     match &start_idx {
         None => panic!("Can't find space in pp_struct"),
@@ -167,6 +161,9 @@ fn splice_struct(pp_struct: &String) -> String {
                     while i < *bound {
                         res.push_str(&String::from(pp_struct.chars().nth(i).unwrap()));
                         i += 1;
+                    }
+                    if res.starts_with("struct") { // forgot pub struct ...
+                        return res[7..].to_string();
                     }
                     res
                 }
@@ -419,6 +416,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                         i = self.insert_into_block(i, param_block.clone(), body);
                     }
 
+                    i = self.insert_into_block(i, dtrace_newline(), body);
+
                     let inc = build_inc(ppt_name.clone());
                     i = self.insert_into_block(i, inc, body);
 
@@ -488,10 +487,13 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                         BasicType::Error => panic!("ret_ty is BasicType::Error")
                     }
 
-                    let inc = build_inc(ppt_name.clone());
-                    i = self.insert_into_block(i, inc, body);
                     let ret = build_ret();
                     i = self.insert_into_block(i, ret, body);
+
+                    i = self.insert_into_block(i, dtrace_newline(), body);
+
+                    let inc = build_inc(ppt_name.clone());
+                    i = self.insert_into_block(i, inc, body);
 
                     // remove old return stmt
                     body.stmts.remove(i); // will want to println! this to debug
@@ -566,10 +568,13 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     BasicType::Error => panic!("ret_ty is BasicType::Error")
                 }
 
-                let inc = build_inc(ppt_name.clone());
-                i = self.insert_into_block(i, inc, body);
                 let ret = build_ret();
                 i = self.insert_into_block(i, ret, body);
+
+                i = self.insert_into_block(i, dtrace_newline(), body);
+
+                let inc = build_inc(ppt_name.clone());
+                i = self.insert_into_block(i, inc, body);
 
                 // remove old return stmt
                 body.stmts.remove(i); // will want to println! this to debug
@@ -604,7 +609,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
             _ => panic!("Base impl is not impl")
         };
         let splice_struct = splice_struct(&pp_struct);
-        let struct_as_ret = build_phony_ret(splice_struct);
+        let struct_as_ret = build_phony_ret(splice_struct); // TODO: fix splice string to handle pub keyword
         the_impl.self_ty = 
             match &self.parser.parse_items_from_string(struct_as_ret) {
                 Err(_why) => panic!("Parsing phony arg failed"),
@@ -796,6 +801,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
             // :0 very scary scary
             i = self.insert_into_block(i, param_block.clone(), body);
         }
+        i = self.insert_into_block(i, dtrace_newline(), body);
 
         // before grokking fn body, turn implicit void return into "return;"
         // this may be unreachable in some situations like

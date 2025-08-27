@@ -6,15 +6,17 @@ use std::{iter, mem};
 use std::collections::HashMap;
 use thin_vec::ThinVec;
 use std::io::Write;
+use std::sync::{LazyLock, Mutex};
 #[allow(unused_imports)]
 use rustc_ast::{
     Item, VariantData, FnRetTy,
     FnDecl, Block, Path, GenericArgs,
     AngleBracketedArg, GenericArg, Pat,
-    FieldDef,
+    FieldDef, Expr, 
 };
 use rustc_ast::visit::FnKind;
 use rustc_parse::parser::item::DO_VISITOR;
+#[allow(unused_imports)]
 use rustc_parse::parser::daikon_strs::{
     I8, I16, I32, I64, I128, ISIZE,
     U8, U16, U32, U64, U128, USIZE,
@@ -493,49 +495,6 @@ fn get_param_ident(pat: &P<Pat>) -> String {
     }
 }
 
-// fn check_prim(ty_str: &str) -> BasicType {
-//     if ty_str == I8 {
-//         return BasicType::Prim(String::from(I8));
-//     } else if ty_str == I16 {
-//         return BasicType::Prim(String::from(I16));
-//     } else if ty_str == I32 {
-//         return BasicType::Prim(String::from(I32));
-//     } else if ty_str == I64 {
-//         return BasicType::Prim(String::from(I64));
-//     } else if ty_str == I128 {
-//         return BasicType::Prim(String::from(I128));
-//     } else if ty_str == ISIZE {
-//         return BasicType::Prim(String::from(ISIZE));
-//     } else if ty_str == U8 {
-//         return BasicType::Prim(String::from(U8));
-//     } else if ty_str == U16 {
-//         return BasicType::Prim(String::from(U16));
-//     } else if ty_str == U32 {
-//         return BasicType::Prim(String::from(U32));
-//     } else if ty_str == U64 {
-//         return BasicType::Prim(String::from(U64));
-//     } else if ty_str == U128 {
-//         return BasicType::Prim(String::from(U128));
-//     } else if ty_str == USIZE {
-//         return BasicType::Prim(String::from(USIZE));
-//     } else if ty_str == F32 {
-//         return BasicType::Prim(String::from(F32));
-//     } else if ty_str == F64 {
-//         return BasicType::Prim(String::from(F64));
-//     } else if ty_str == CHAR {
-//         return BasicType::Prim(String::from(CHAR));
-//     } else if ty_str == BOOL {
-//         return BasicType::Prim(String::from(BOOL));
-//     } else if ty_str == UNIT {
-//         return BasicType::Prim(String::from(UNIT));
-//     } else if ty_str == STR {
-//         return BasicType::Prim(String::from(STR));
-//     } else if ty_str == STRING {
-//         return BasicType::Prim(String::from(STRING));
-//     }
-//     BasicType::Error
-// }
-
 fn get_prim_rep_type(ty_str: &str) -> String {
     if ty_str == I8 || ty_str == I16 ||
        ty_str == I32 || ty_str == I64 ||
@@ -559,13 +518,13 @@ fn get_prim_rep_type(ty_str: &str) -> String {
 }
 
 // TODO: check for arrays of these, int[], boolean[], char[], java.lang.String[]
-fn is_java_type(rep_type: &String) -> bool {
-    if rep_type == "int" || rep_type == "char" ||
-       rep_type == "boolean" || rep_type == "java.lang.String" {
-        return true;
-    }
-    return false;
-}
+// fn is_java_type(rep_type: &String) -> bool {
+//     if rep_type == "int" || rep_type == "char" ||
+//        rep_type == "boolean" || rep_type == "java.lang.String" {
+//         return true;
+//     }
+//     return false;
+// }
 
 // Will need to adjust this to get rep/dec types
 // fn grok_vec_args(path: &Path) -> BasicType {
@@ -588,14 +547,23 @@ fn is_java_type(rep_type: &String) -> bool {
 //     }
 // }
 
+#[allow(dead_code)]
+#[derive(PartialEq)]
+enum RepType {
+    Prim(String),
+    PrimArray(String),
+    HashCodeArray(String),
+    HashCodeStruct(String),
+}
+
 // who gets hashcode[]
-fn get_rep_type(kind: &TyKind, is_ref: &mut bool, raw_type: &mut String) -> String {
+fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
     match &kind {
-        TyKind::Array(_arr_type, _) => todo!(), // return something like int[], etc.
+        TyKind::Array(_arr_type, _) => todo!(), // PrimArray(p_type) or HashCodeArray(ty_string)
         TyKind::Ptr(_) => todo!(),
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
-            return get_rep_type(&mut_ty.ty.kind, is_ref, raw_type);
+            return get_rep_type(&mut_ty.ty.kind, is_ref);
         }
         TyKind::Path(_, path) => {
             if path.segments.len() == 0 {
@@ -604,58 +572,28 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool, raw_type: &mut String) -> Stri
             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
             let maybe_prim_rep = get_prim_rep_type(ty_string);
             if maybe_prim_rep != "" {
-                return maybe_prim_rep;
+                return RepType::Prim(maybe_prim_rep);
             }
             if ty_string == VEC {
                 // TODO
-                return String::from(""); // return something like int[], etc.
+                todo!();
             }
-            raw_type.push_str(ty_string);
-            return String::from("hashcode");
+            return RepType::HashCodeStruct(String::from(ty_string));
         }
         _ => todo!()
     }
 }
 
-// fn get_basic_type(kind: &TyKind) -> BasicType {
-//     match &kind {
-//         TyKind::Array(_arr_type, _anon_const) => BasicType::Error,
-//         TyKind::Ptr(_mut_ty) => BasicType::Error,
-//         TyKind::Ref(_, mut_ty) => {
-//             // use recursion to get to the underlying type
-//             // :O very scary scary
-//             get_basic_type(&mut_ty.ty.kind)
-//         },
-//         TyKind::Path(_, path) => {
-//             if path.segments.len() == 0 {
-//                 panic!("Path has no type");
-//             }
-//             let ty_string = path.segments[path.segments.len() - 1].ident.as_str();
-//             let try_prim = check_prim(ty_string);
-//             if try_prim != BasicType::Error {
-//                 return try_prim;
-//             }
-//             if ty_string == VEC {
-//                 return grok_vec_args(&path);
-//             }
-//             BasicType::UserDef
-//         },
-//         _ => BasicType::Error,
-//     }
-// }
-
-// not sure if this is the way to track nonsense records.
-
-// #[allow(rustc::default_hash_types)]
-// fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
-//     let mut res = HashMap::new();
-//     let mut i = 0;
-//     while i < decl.inputs.len() {
-//         res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
-//         i += 1;
-//     }
-//     res
-// }
+#[allow(rustc::default_hash_types)]
+fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
+    let mut res = HashMap::new();
+    let mut i = 0;
+    while i < decl.inputs.len() {
+        res.insert(get_param_ident(&decl.inputs[i].pat), i as i32);
+        i += 1;
+    }
+    res
+}
 
 #[allow(rustc::default_hash_types)]
 struct DeclsHashMapBuilder<'a> {
@@ -682,188 +620,962 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
 }
 
 #[allow(rustc::default_hash_types)]
+#[allow(dead_code)]
 struct DaikonDeclsVisitor<'a> {
     pub map: &'a HashMap<String, P<Item>>,
-    pub decls: &'a mut std::fs::File,
     pub depth_limit: u32,
 }
 
 #[allow(dead_code)]
-enum DeclCode {
-    Field,
-    ArrContent,
-    TopLevel,
+#[allow(rustc::default_hash_types)]
+struct TopLevlDecl<'a> {
+    pub map: &'a HashMap<String, P<Item>>,
+    pub var_name: String,
+    pub dec_type: String,
+    pub rep_type: String,
+    pub key: Option<String>, // struct name for looking up structs if this is a struct
+    pub field_decls: Option<Vec<FieldDecl<'a>>>,
+    pub contents: Option<ArrayContents<'a>>
 }
 
 #[allow(dead_code)]
 #[allow(rustc::default_hash_types)]
-struct VarDecl<'a> {
-    map: &'a HashMap<String, P<Item>>,
-    var_name: String,
-    dec_type: String,
-    rep_type: String,
-    code: DeclCode,
-    subvars: Vec<VarDecl<'a>>,
+struct FieldDecl<'a> {
+    pub map: &'a HashMap<String, P<Item>>,
+    pub var_name: String,
+    pub dec_type: String,
+    pub rep_type: String,
+    pub enclosing_var: String,
+    pub field_name: String,
+    pub key: Option<String>,
+    pub field_decls: Option<Vec<FieldDecl<'a>>>,
+    pub contents: Option<ArrayContents<'a>>,
 }
 
-impl<'a> VarDecl<'a> {
-    #[allow(dead_code)]
-    fn write(&self) {
-        // TODO: write this decl and children
-    }
+#[allow(dead_code)]
+#[allow(rustc::default_hash_types)]
+struct ArrayContents<'a> {
+    pub map: &'a HashMap<String, P<Item>>,
+    pub var_name: String,
+    pub dec_type: String,
+    pub rep_type: String,
+    pub enclosing_var: String,
+    pub key: Option<String>,
+    pub sub_contents: Option<Vec<ArrayContents<'a>>>, // only if this is a hashcode[], for printing subfield array records
+}
 
-    fn get_fields(&self) -> ThinVec<FieldDef> {
-        let struct_item = self.map.get(&self.dec_type);
-        match &struct_item {
-            None => panic!("struct dec type not found"),
-            Some(struct_item) => match &struct_item.kind {
-                ItemKind::Struct(_, _, variant_data) => match variant_data {
-                    VariantData::Struct { fields, recovered: _ } => {
-                        fields.clone()
-                    }
-                    _ => panic!("struct dec type is not a struct 1")
+impl<'a> ArrayContents<'a> {
+    fn write(&mut self) {
+        match &mut *DECLS.lock().unwrap() {
+            None => panic!("Cannot open decls"),
+            Some(decls) => {
+                writeln!(decls, "variable {}", self.var_name).ok();
+                writeln!(decls, "  var-kind array").ok();
+                writeln!(decls, "  enclosing-var {}", self.enclosing_var).ok();
+                writeln!(decls, "  array 1").ok();
+                writeln!(decls, "  dec-type {}", self.dec_type).ok();
+                writeln!(decls, "  rep-type {}", self.rep_type).ok();
+                writeln!(decls, "  comparability -1").ok();
+            }
+        }
+
+        match &mut self.sub_contents {
+            None => {}
+            Some(sub_contents) => {
+                let mut i = 0;
+                while i < sub_contents.len() {
+                    sub_contents[i].write();
+                    i += 1;
                 }
-                _ => panic!("struct dec type is not a struct 2")
             }
         }
     }
 
-    fn build_field_decls(&self, depth_limit: u32) {
+    fn get_fields(&self) -> ThinVec<FieldDef> {
+        // use self.key to look up who we are.
+        match &self.key {
+            None => panic!("No key for get_fields"),
+            Some(key) => {
+                let struct_item = self.map.get(key);
+                match &struct_item {
+                    None => panic!("No struct in get_fields"),
+                    Some(struct_item) => match &struct_item.kind {
+                        ItemKind::Struct(_, _, variant_data) => match variant_data {
+                            VariantData::Struct { fields, recovered: _ } => {
+                                fields.clone()
+                            }
+                            _ => panic!("Struct is not VariantData::Struct"),
+                        }
+                        _ => panic!("struct_item is not a struct")
+                    }
+                }
+            }
+        }
+    }
+
+    // TODO: only ArrayContents should have this method, makes more sense that way.
+    // very similar to build_fields, different cases depending on RepType
+    fn build_contents(&mut self, depth_limit: u32) {
         if depth_limit == 0 {
             return;
         }
 
+        // fields of the struct in this array
         let fields = self.get_fields();
-        let mut i = 0;
 
-        // push to subvars
-        // don't forget to declare the pointer at this level
-        // for struct fields.
+        let mut i = 0;
         while i < fields.len() {
-            let _field_name = match &fields[i].ident {
+            let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
                 None => panic!("Field has no identifier")
             };
-
+            let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
-
-            let mut raw_type = String::from("");
-            let rep_type = get_rep_type(&fields[i].ty.kind, &mut is_ref, &mut raw_type);
-            let _dec_type =
-                if is_java_type(&rep_type) {
-                    rep_type.clone()
-                } else if rep_type == "hashcode" {
-                    raw_type.clone() // keep the struct name to lookup when writing this var decl,
-                } else {             // do the same for nested structs.
-                    String::from("<decl>") // 
+            let var_decl =
+                match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+                    RepType::Prim(p_type) => {
+                        ArrayContents {
+                            map: self.map,
+                            var_name: var_name.clone(),
+                            dec_type: format!("{}[]", p_type),
+                            rep_type: format!("{}[]", p_type),
+                            enclosing_var: self.var_name.clone(),
+                            key: None,
+                            sub_contents: None,
+                        }
+                    }
+                    RepType::HashCodeStruct(ty_string) => {
+                        let mut tmp =
+                            ArrayContents {
+                                map: self.map,
+                                var_name: var_name.clone(),
+                                dec_type: format!("{}[]", ty_string),
+                                rep_type: String::from("hashcode[]"),
+                                enclosing_var: self.var_name.clone(),
+                                key: Some(ty_string.clone()),
+                                sub_contents: Some(Vec::new())
+                            };
+                        tmp.build_contents(depth_limit - 1);
+                        tmp
+                    }
+                    RepType::PrimArray(_) => { // only print pointers
+                        ArrayContents {
+                            map: self.map,
+                            var_name: var_name.clone(),
+                            dec_type: String::from("<higher dim array>"),
+                            rep_type: String::from("hashcode[]"),
+                            enclosing_var: self.var_name.clone(),
+                            key: None, // we shouldn't be using this in write.
+                            sub_contents: None
+                        }
+                    }
+                    RepType::HashCodeArray(_) => { // only print pointers
+                        ArrayContents {
+                            map: self.map,
+                            var_name: var_name.clone(),
+                            dec_type: String::from("<higher dim array>"),
+                            rep_type: String::from("hashcode[]"),
+                            enclosing_var: self.var_name.clone(),
+                            key: None,
+                            sub_contents: None
+                        }
+                    }
                 };
-
-            // what kind of value is this: to set VarDecl::code field, to know what function to recurse with
-        
-        
+            match &mut self.sub_contents {
+                None => panic!("No sub_contents in build_contents"),
+                Some(sub_contents) => {
+                    sub_contents.push(var_decl);
+                }
+            }
+            
             i += 1;
+        }
+    }
+}
+
+impl<'a> FieldDecl<'a> {
+    fn write(&mut self) {
+        match &mut *DECLS.lock().unwrap() {
+            None => panic!("Cannot open decls"),
+            Some(decls) => {
+                writeln!(decls, "variable {}", self.var_name).ok();
+                writeln!(decls, "  var-kind field {}", self.field_name).ok();
+                writeln!(decls, "  enclosing-var {}", self.enclosing_var).ok();
+                writeln!(decls, "  dec-type {}", self.dec_type).ok();
+                writeln!(decls, "  rep-type {}", self.rep_type).ok();
+                writeln!(decls, "  comparability -1").ok();
+            }
+        }
+
+        match &mut self.field_decls {
+            None => {}
+            Some(field_decls) => {
+                let mut i = 0;
+                while i < field_decls.len() {
+                    field_decls[i].write();
+                    i += 1;
+                }
+                return;
+            }
+        }
+        match &mut self.contents {
+            None => {}
+            Some(contents) => {
+                contents.write();
+            }
+        }
+    }
+
+    fn get_fields(&self) -> ThinVec<FieldDef> {
+        // use self.key to look up who we are.
+        match &self.key {
+            None => panic!("No key for get_fields"),
+            Some(key) => {
+                let struct_item = self.map.get(key);
+                match &struct_item {
+                    None => panic!("No struct in get_fields"),
+                    Some(struct_item) => match &struct_item.kind {
+                        ItemKind::Struct(_, _, variant_data) => match variant_data {
+                            VariantData::Struct { fields, recovered: _ } => {
+                                fields.clone()
+                            }
+                            _ => panic!("Struct is not VariantData::Struct"),
+                        }
+                        _ => panic!("struct_item is not a struct")
+                    }
+                }
+            }
+        }
+    }
+
+    fn build_fields(&mut self, depth_limit: u32) {
+        if depth_limit == 0 {
+            // Invalidate ourselves for writing? Or will writing stop too...
+            return;
+        }
+
+        let fields = self.get_fields();
+
+        let mut i = 0;
+        while i < fields.len() {
+            let field_name = match &fields[i].ident {
+                Some(field_ident) => String::from(field_ident.as_str()),
+                None => panic!("Field has no identifier")
+            };
+            let var_name = format!("{}.{}", self.var_name, field_name);
+            let mut is_ref = false;
+            let var_decl =
+                match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+                    RepType::Prim(p_type) => {
+                        FieldDecl {
+                            map: self.map,
+                            var_name: var_name.clone(),
+                            dec_type: p_type.clone(),
+                            rep_type: p_type.clone(),
+                            enclosing_var: self.var_name.clone(),
+                            field_name: field_name.clone(),
+                            key: None,
+                            field_decls: None,
+                            contents: None,
+                        } // Ready to write.
+                    }
+                    RepType::HashCodeStruct(ty_string) => {
+                        let mut tmp =
+                            FieldDecl {
+                                map: self.map,
+                                var_name: var_name.clone(),
+                                dec_type: ty_string.clone(),
+                                rep_type: String::from("hashcode"),
+                                enclosing_var: self.var_name.clone(),
+                                field_name: field_name.clone(),
+                                key: Some(ty_string.clone()),
+                                field_decls: Some(Vec::new()),
+                                contents: None,
+                            };
+                        tmp.build_fields(depth_limit - 1);
+                        tmp
+                    }
+                    RepType::PrimArray(p_type) => {
+                        FieldDecl {
+                            map: self.map,
+                            var_name: var_name.clone(),
+                            dec_type: format!("{}[]", p_type),
+                            rep_type: String::from("hashcode"),
+                            enclosing_var: self.var_name.clone(),
+                            field_name: field_name.clone(),
+                            key: None,
+                            field_decls: None,
+                            contents: Some(ArrayContents {
+                                map: self.map,
+                                var_name: format!("{}[..]", var_name),
+                                dec_type: format!("{}[]", p_type),
+                                rep_type: format!("{}[]", p_type),
+                                enclosing_var: var_name.clone(),
+                                key: None,
+                                sub_contents: None,
+                            }) // Ready to write.
+                        }
+                    }
+                    RepType::HashCodeArray(ty_string) => {
+                        let mut tmp =
+                            FieldDecl {
+                                map: self.map,
+                                var_name: var_name.clone(),
+                                dec_type: format!("{}[]", ty_string),
+                                rep_type: String::from("hashcode"),
+                                enclosing_var: self.var_name.clone(),
+                                field_name: field_name.clone(),
+                                key: Some(ty_string.clone()),
+                                field_decls: None,
+                                contents: Some(ArrayContents {
+                                    map: self.map,
+                                    var_name: format!("{}[..]", var_name),
+                                    dec_type: format!("{}[]", ty_string),
+                                    rep_type: String::from("hashcode[]"),
+                                    enclosing_var: var_name.clone(),
+                                    key: Some(ty_string.clone()),
+                                    sub_contents: Some(Vec::new()),
+                                })
+                            };
+                        match &mut tmp.contents {
+                            None => panic!(""),
+                            Some(contents) => {
+                                contents.build_contents(depth_limit - 1);
+                            }
+                        }
+                        tmp
+                    }
+                };
+                match &mut self.field_decls {
+                    None => panic!("No field_decls in build_fields"),
+                    Some(field_decls) => {
+                        field_decls.push(var_decl);
+                    }
+                }
+
+            i += 1;
+        }
+    }
+}
+
+impl<'a> TopLevlDecl<'a> {
+    #[allow(dead_code)]
+    fn write(&mut self) {
+        match &mut *DECLS.lock().unwrap() {
+            None => panic!("Cannot open decls"),
+            Some(decls) => {
+                // TODO: implement this, manually construct one with something from library-daikon/main.decls, and test write. Then just step through exit points and call write.
+                writeln!(decls, "variable {}", self.var_name).ok();
+                writeln!(decls, "  var-kind variable").ok();
+                writeln!(decls, "  dec-type {}", self.dec_type).ok();
+                writeln!(decls, "  rep-type {}", self.rep_type).ok();
+                writeln!(decls, "  flags is_param").ok();
+                writeln!(decls, "  comparability -1").ok();
+            }
+        }
+
+        match &mut self.field_decls {
+            None => {}
+            Some(field_decls) => {
+                let mut i = 0;
+                while i < field_decls.len() {
+                    field_decls[i].write();
+                    i += 1;
+                }
+                return;
+            }
+        }
+        match &mut self.contents {
+            None => {}
+            Some(contents) => {
+                contents.write();
+            }
+        }
+    }
+
+    fn build_fields(&mut self, depth_limit: u32) {
+        if depth_limit == 0 {
+            // Invalidate ourselves for writing? Or will writing stop too...
+            return;
+        }
+
+        let fields = self.get_fields();
+
+        let mut i = 0;
+        while i < fields.len() {
+            let field_name = match &fields[i].ident {
+                Some(field_ident) => String::from(field_ident.as_str()),
+                None => panic!("Field has no identifier")
+            };
+            let var_name = format!("{}.{}", self.var_name, field_name);
+            let mut is_ref = false;
+            let var_decl =
+                match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+                    RepType::Prim(p_type) => {
+                        FieldDecl {
+                            map: self.map,
+                            var_name: var_name.clone(),
+                            dec_type: p_type.clone(),
+                            rep_type: p_type.clone(),
+                            enclosing_var: self.var_name.clone(),
+                            field_name: field_name.clone(),
+                            key: None,
+                            field_decls: None,
+                            contents: None,
+                        } // Ready to write.
+                    }
+                    RepType::HashCodeStruct(ty_string) => {
+                        let mut tmp =
+                            FieldDecl {
+                                map: self.map,
+                                var_name: var_name.clone(),
+                                dec_type: ty_string.clone(),
+                                rep_type: String::from("hashcode"),
+                                enclosing_var: self.var_name.clone(),
+                                field_name: field_name.clone(),
+                                key: Some(ty_string.clone()),
+                                field_decls: Some(Vec::new()),
+                                contents: None,
+                            };
+                        tmp.build_fields(depth_limit - 1);
+                        tmp
+                    }
+                    RepType::PrimArray(p_type) => {
+                        FieldDecl {
+                            map: self.map,
+                            var_name: var_name.clone(),
+                            dec_type: format!("{}[]", p_type),
+                            rep_type: String::from("hashcode"),
+                            enclosing_var: self.var_name.clone(),
+                            field_name: field_name.clone(),
+                            key: None,
+                            field_decls: None,
+                            contents: Some(ArrayContents {
+                                map: self.map,
+                                var_name: format!("{}[..]", var_name),
+                                dec_type: format!("{}[]", p_type),
+                                rep_type: format!("{}[]", p_type),
+                                enclosing_var: var_name.clone(),
+                                key: None,
+                                sub_contents: None,
+                            }) // Ready to write.
+                        }
+                    }
+                    RepType::HashCodeArray(ty_string) => {
+                        let mut tmp =
+                            FieldDecl {
+                                map: self.map,
+                                var_name: var_name.clone(),
+                                dec_type: format!("{}[]", ty_string),
+                                rep_type: String::from("hashcode"),
+                                enclosing_var: self.var_name.clone(),
+                                field_name: field_name.clone(),
+                                key: Some(ty_string.clone()),
+                                field_decls: None,
+                                contents: Some(ArrayContents {
+                                    map: self.map,
+                                    var_name: format!("{}[..]", var_name),
+                                    dec_type: format!("{}[]", ty_string),
+                                    rep_type: String::from("hashcode[]"),
+                                    enclosing_var: var_name.clone(),
+                                    key: Some(ty_string.clone()),
+                                    sub_contents: Some(Vec::new()),
+                                })
+                            };
+                        match &mut tmp.contents {
+                            None => panic!(""),
+                            Some(contents) => {
+                                contents.build_contents(depth_limit - 1);
+                            }
+                        }
+                        tmp
+                    }
+                };
+                match &mut self.field_decls {
+                    None => panic!("No field_decls in build_fields"),
+                    Some(field_decls) => {
+                        field_decls.push(var_decl);
+                    }
+                }
+
+            i += 1;
+        }
+    }
+
+    #[allow(dead_code)]
+    fn get_fields(&self) -> ThinVec<FieldDef> {
+        // use self.key to look up who we are.
+        match &self.key {
+            None => panic!("No key for get_fields"),
+            Some(key) => {
+                let struct_item = self.map.get(key);
+                match &struct_item {
+                    None => panic!("No struct in get_fields"),
+                    Some(struct_item) => match &struct_item.kind {
+                        ItemKind::Struct(_, _, variant_data) => match variant_data {
+                            VariantData::Struct { fields, recovered: _ } => {
+                                fields.clone()
+                            }
+                            _ => panic!("Struct is not VariantData::Struct"),
+                        }
+                        _ => panic!("struct_item is not a struct")
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn write_entry(ppt_name: String) {
+    match &mut *DECLS.lock().unwrap() {
+        None => panic!("Cannot access decls"),
+        Some(decls) => {
+            writeln!(decls, "ppt {}:::ENTER", ppt_name).ok();
+            writeln!(decls, "ppt-type enter").ok();
+        }
+    }
+}
+
+fn write_exit(ppt_name: String, exit_counter: usize) {
+    match &mut *DECLS.lock().unwrap() {
+        None => panic!("Cannot access decls"),
+        Some(decls) => {
+            writeln!(decls, "ppt {}:::EXIT{}", ppt_name, exit_counter).ok();
+            writeln!(decls, "ppt-type exit").ok();
+        }
+    }
+}
+
+fn write_newline() {
+    match &mut *DECLS.lock().unwrap() {
+        None => panic!("Cannot access decls"),
+        Some(decls) => {
+            writeln!(decls, "").ok();
+        }
+    }
+}
+
+fn write_header() {
+    match &mut *DECLS.lock().unwrap() {
+        None => panic!("Cannot access decls"),
+        Some(decls) => {
+            writeln!(decls, "decl-version 2.0").ok();
+            writeln!(decls, "input-language Rust").ok();
+            writeln!(decls, "var-comparability implicit").ok();
         }
     }
 }
 
 impl<'a> DaikonDeclsVisitor<'a> {
-
-    fn write_entry(&mut self,
-                   ppt_name: String) {
-        writeln!(self.decls, "ppt {}:::ENTER", ppt_name).ok();
-        writeln!(self.decls, "ppt-type enter").ok();
+    #[allow(rustc::default_hash_types)]
+    fn grok_expr_for_if(&mut self,
+                        expr: &P<Expr>,
+                        exit_counter: &mut usize,
+                        ppt_name: String,
+                        param_decls: &mut Vec<TopLevlDecl<'_>>,
+                        param_to_block_idx: &HashMap<String, i32>,
+                        ret_ty: &FnRetTy) {
+        match &expr.kind {
+            ExprKind::Block(block, _) => {
+                self.grok_block(ppt_name.clone(),
+                                block,
+                                param_decls,
+                                &param_to_block_idx,
+                                &ret_ty,
+                                exit_counter);
+            }
+            ExprKind::If(_, if_block, None) => {
+                self.grok_block(ppt_name.clone(),
+                                if_block,
+                                param_decls,
+                                &param_to_block_idx,
+                                &ret_ty,
+                                exit_counter);
+            }
+            ExprKind::If(_, if_block, Some(another_expr)) => {
+                self.grok_block(ppt_name.clone(),
+                                if_block,
+                                param_decls,
+                                &param_to_block_idx,
+                                &ret_ty,
+                                exit_counter);
+                self.grok_expr_for_if(another_expr,
+                                      exit_counter,
+                                      ppt_name.clone(),
+                                      param_decls,
+                                      &param_to_block_idx,
+                                      &ret_ty);
+            }
+            _ => panic!("Internal error handling if stmt with else!")
+        }
     }
 
-    // fn write_exit(&mut self,
-    //               ppt_name: String,
-    //               exit_counter: usize) {
-    //     writeln!(self.decls, "ppt {}:::EXIT{}", ppt_name, exit_counter.to_string()).ok();
-    //     writeln!(self.decls, "ppt-type exit").ok();
-    // }
+    // grok body.stmts[i]
+    #[allow(rustc::default_hash_types)]
+    fn grok_stmt(&mut self,
+                 loc: usize,
+                 body: &P<Block>,
+                 exit_counter: &mut usize,
+                 ppt_name: String,
+                 param_decls: &mut Vec<TopLevlDecl<'_>>,
+                 param_to_block_idx: &HashMap<String, i32>,
+                 ret_ty: &FnRetTy) -> usize {
+        let mut i = loc;
+        let stmt = body.stmts[i].clone();
+        // println!("{}\n\n", pprust::stmt_to_string(&stmt));
+        match &body.stmts[i].kind { // TODO: you can probably merge these now since no &mut.
+            StmtKind::Let(_local) => { return i+1; }
+            StmtKind::Item(_item) => { return i+1; }
+            StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
+                // Blocks.
+                // recurse on nested block,
+                // but we still only grokked one (block) stmt, so just
+                // move to the next stmt (return i+1)
+                ExprKind::Block(block, _) => {
+                    self.grok_block(ppt_name.clone(),
+                                    block,
+                                    param_decls,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                }
+                ExprKind::If(_, if_block, None) => { // no else
+                    self.grok_block(ppt_name.clone(),
+                                    if_block,
+                                    param_decls,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                }
+                ExprKind::If(_, if_block, Some(expr)) => { // yes else
+                    self.grok_block(ppt_name.clone(),
+                                    if_block,
+                                    param_decls,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
 
-    // fn write_var(&mut self,
-    //              decl: &VarDecl) {
-    //     writeln!(self.decls, "variable {}", decl.var_name).ok();
-    //     writeln!(self.decls, "  var-kind variable").ok();
-    //     writeln!(self.decls, "  dec-type {}", decl.dec_type).ok();
-    //     writeln!(self.decls, "  rep-type {}", decl.rep_type).ok();
-    //     writeln!(self.decls, "  flags is_param").ok();
-    //     writeln!(self.decls, "  comparability -1").ok();
-    // }
+                    self.grok_expr_for_if(expr,
+                                          exit_counter,
+                                          ppt_name.clone(),
+                                          param_decls,
+                                          &param_to_block_idx,
+                                          &ret_ty);
+                    return i+1;
+                }
+                ExprKind::While(_, while_block, _) => {
+                    self.grok_block(ppt_name.clone(),
+                                    while_block,
+                                    param_decls,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                }
+                ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
+                    self.grok_block(ppt_name.clone(),
+                                    for_block,
+                                    param_decls,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                }
+                ExprKind::Loop(loop_block, _, _) => {
+                    self.grok_block(ppt_name.clone(),
+                                    loop_block,
+                                    param_decls,
+                                    &param_to_block_idx,
+                                    &ret_ty,
+                                    exit_counter);
+                    return i+1;
+                } // missing Match blocks, TryBlock, Const block? probably more
+                _ => {}
+            }
+            _ => {}
+        }
+        match &stmt.kind {
+            StmtKind::Semi(semi) => match &semi.kind {
+                ExprKind::Ret(None) => {
+                    write_exit(ppt_name.clone(), *exit_counter);
+                    let mut idx = 0;
+                    while idx < param_decls.len() {
+                        param_decls[idx].write();
+                        idx += 1;
+                    }
+                    write_newline();
 
-    // fn write_field_var(&mut self,
-    //                    var_name: String,
-    //                    enclosing_var: String,
-    //                    field_name: String,
-    //                    dec_type: String,
-    //                    rep_type: String) {
-    //     writeln!(self.decls, "variable {}", var_name).ok();
-    //     writeln!(self.decls, "  var-kind field {}", field_name).ok();
-    //     writeln!(self.decls, "  enclosing-var {}", enclosing_var).ok();
-    //     writeln!(self.decls, "  dec-type {}", dec_type).ok();
-    //     writeln!(self.decls, "  rep-type {}", rep_type).ok();
-    //     writeln!(self.decls, "  comparability -1").ok();
-    // }
+                    // we're sitting on the void return we just processed, so inc
+                    // to move on
+                    i += 1;
+                }
+                ExprKind::Ret(Some(_)) => {
+                    write_exit(ppt_name.clone(), *exit_counter);
+                    let mut idx = 0;
+                    while idx < param_decls.len() {
+                        param_decls[idx].write();
+                        idx += 1;
+                    }
+                    write_newline();
 
-    // fn write_array_contents(&mut self,
-    //                         arr_name: String,
-    //                         arr_type: String) {
-    //     writeln!(self.decls, "variable {}[..]", arr_name).ok();
-    //     writeln!(self.decls, "  var-kind array").ok();
-    //     writeln!(self.decls, "  enclosing-var {}", arr_name).ok();
-    //     writeln!(self.decls, "  array 1").ok();
-    //     writeln!(self.decls, "  dec-type {}[]", arr_type).ok();
-    //     writeln!(self.decls, "  rep-type {}[]", arr_type).ok();
-    //     writeln!(self.decls, "  comparability -1").ok();
-    // }
+                    // make return TopLevlDecl
+                    match &ret_ty {
+                        FnRetTy::Default(_) => {} // no return record to be had.
+                        FnRetTy::Ty(ty) => {
+                            let var_name = String::from("return");
+                            let mut is_ref = false;
+                            let mut return_decl =
+                                match &get_rep_type(&ty.kind, &mut is_ref) {
+                                    RepType::Prim(p_type) => {
+                                        TopLevlDecl {
+                                            map: self.map,
+                                            var_name: var_name.clone(),
+                                            dec_type: p_type.clone(),
+                                            rep_type: p_type.clone(),
+                                            key: None,
+                                            field_decls: None,
+                                            contents: None,
+                                        } // Ready to write this var decl.
+                                    }
+                                    RepType::HashCodeStruct(ty_string) => {
+                                        let mut tmp =
+                                            TopLevlDecl {
+                                                map: self.map,
+                                                var_name: var_name.clone(),
+                                                dec_type: ty_string.clone(),
+                                                rep_type: String::from("hashcode"),
+                                                key: Some(ty_string.clone()),
+                                                field_decls: Some(Vec::new()),
+                                                contents: None,
+                                            };
+                                        tmp.build_fields(self.depth_limit);
+                                        tmp
+                                    }
+                                    RepType::PrimArray(p_type) => {
+                                        TopLevlDecl {
+                                            map: self.map,
+                                            var_name: var_name.clone(),
+                                            dec_type: format!("{}[]", p_type),
+                                            rep_type: String::from("hashcode"),
+                                            key: None,
+                                            field_decls: None,
+                                            contents: Some(ArrayContents {
+                                                map: self.map,
+                                                var_name: format!("{}[..]", var_name),
+                                                dec_type: format!("{}[]", p_type),
+                                                rep_type: format!("{}[]", p_type),
+                                                enclosing_var: var_name.clone(),
+                                                key: None,
+                                                sub_contents: None,
+                                            }) // Ready to write this var_decl.
+                                        }
+                                    }
+                                    RepType::HashCodeArray(ty_string) => {
+                                        let mut tmp =
+                                            TopLevlDecl {
+                                                map: self.map,
+                                                var_name: var_name.clone(),
+                                                dec_type: format!("{}[]", ty_string),
+                                                rep_type: String::from("hashcode"),
+                                                key: Some(ty_string.clone()),
+                                                field_decls: None,
+                                                contents: Some(ArrayContents {
+                                                    map: self.map,
+                                                    var_name: format!("{}[..]", var_name),
+                                                    dec_type: format!("{}[]", ty_string),
+                                                    rep_type: String::from("hashcode[]"),
+                                                    enclosing_var: var_name.clone(),
+                                                    key: Some(ty_string.clone()),
+                                                    sub_contents: Some(Vec::new())
+                                                })
+                                            };
+                                        match &mut tmp.contents {
+                                            None => panic!(""),
+                                            Some(contents) => {
+                                                contents.build_contents(self.depth_limit - 1);
+                                            }
+                                        }
+                                        tmp
+                                    }
+                                };
+                            return_decl.write();
+                        }
+                    }
+                    // probably:
+                    i += 1;
 
-    fn grok_fn_sig(&mut self, decl: &P<FnDecl>) -> Vec<VarDecl<'_>> {
-        let mut var_decls: Vec<VarDecl<'_>> = Vec::new();
+                }
+                ExprKind::Call(_call, _params) => { return i+1; } // Maybe check for drop and other invalidations
+                _ => { return i+1; } // other things you overlooked
+            }
+            // non-block exprs are exit points, approximating this with a catch-all for non-semi exprs
+            StmtKind::Expr(_) => { // we know it is not a block, so it must be trailing no-semi return expr
+                panic!("There should be no non-semi returns left");
+            }
+            _ => { return i+1; }
+        }
+        i
+    }
+
+    #[allow(rustc::default_hash_types)]
+    fn grok_block(&mut self,
+                  ppt_name: String,
+                  body: &P<Block>,
+                  param_decls: &mut Vec<TopLevlDecl<'_>>,
+                  param_to_block_idx: &HashMap<String, i32>,
+                  ret_ty: &FnRetTy,
+                  exit_counter: &mut usize) {
         let mut i = 0;
-        while i < decl.inputs.len() {
 
-            // is this important for the declaration? for ptr vs value?
-            let mut is_ref = false;
+        // assuming no unreachable statements.
+        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(i,
+                               body,
+                               exit_counter,
+                               ppt_name.clone(),
+                               param_decls,
+                               &param_to_block_idx,
+                               &ret_ty); // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
+        }
+    }
 
-            let mut raw_type = String::from("");
-            let rep_type = get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref, &mut raw_type);
-            let dec_type =
-                if is_java_type(&rep_type) {
-                    rep_type.clone()
-                } else if rep_type == "hashcode" {
-                    raw_type.clone() // keep the struct name to lookup when writing this var decl,
-                } else {             // do the same for nested structs.
-                    String::from("<decl>") // is it important otherwise?
-                };
+    // is it a good idea to store which params are valid at each exit
+    // ppt for the decls pass which happens after this?
+    // then the decls pass just needs to
+    // 1: visit_item to build HashMap<ident, StructNode>
+    // 2: visit_fn, grok sig, and grok exit ppts using structural
+    //    recursion on StructNodes for nesting. Need to use depth counter
+    //    for a base case.
 
-            let var_decl =
-                VarDecl {
-                    map: self.map,
-                    var_name: get_param_ident(&decl.inputs[i].pat),
-                    dec_type: dec_type,
-                    rep_type: rep_type,
-                    code: DeclCode::TopLevel,
-                    subvars: Vec::new(),
-                };
-            if var_decl.rep_type == "hashcode" {
-                // query map to recursively build this decl's children
-                var_decl.build_field_decls(self.depth_limit);
-            } // else if var_decl.rep_type == "hashcode[]" {
+    // this code being messed up is independent from the dtrace_param_blocks being messed up.
+    // Make sure you know what's broken
+    #[allow(rustc::default_hash_types)]
+    fn grok_fn_body(&mut self,
+                    ppt_name: String,
+                    body: &P<Block>,
+                    param_decls: &mut Vec<TopLevlDecl<'_>>,
+                    param_to_block_idx: HashMap<String, i32>,
+                    ret_ty: &FnRetTy) { // arg_dtraces: String,
+        //let original_len = body.stmts.len();
+        // let entry = build_entry(ppt_name.clone());
+        // i = self.insert_into_block(i, entry, body);
+        // for param_block in &mut *dtrace_param_blocks {
+        //     // :0 very scary scary
+        //     i = self.insert_into_block(i, param_block.clone(), body);
+        // }
 
-            // } else if var_decl.rep_type == "int[]"
-            // You'll need to handle array content separately?
+        // before grokking fn body, turn implicit void return into "return;"
+        // this may be unreachable in some situations like
+        // fn foo(t: bool) { if t == true { return; } else { return; } }
 
-            var_decls.push(var_decl);
-            i += 1;
+        // look for returns and nested blocks (recurse in those cases)
+        let mut exit_counter = 1;
+
+        // assuming no unreachable statements.
+        let mut i = 0;
+        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(i,
+                               body,
+                               &mut exit_counter,
+                               ppt_name.clone(),
+                               param_decls,
+                               &param_to_block_idx,
+                               &ret_ty); // match on Semi mainly for now, find return <expr>; and add an exit point.
         }
 
-        var_decls
+    }
+}
+
+#[allow(rustc::default_hash_types)]
+fn grok_fn_sig<'a>(decl: &'a P<FnDecl>, map: &'a HashMap<String, P<Item>>, depth_limit: u32) -> Vec<TopLevlDecl<'a>> {
+    let mut var_decls: Vec<TopLevlDecl<'_>> = Vec::new();
+    let mut i = 0;
+    while i < decl.inputs.len() {
+
+        let var_name = get_param_ident(&decl.inputs[i].pat);
+        let mut is_ref = false;
+        // TODO: copy this code for getting a TopLevlDecl for the return value.
+        let toplevl_decl =
+            match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+                RepType::Prim(p_type) => {
+                    TopLevlDecl {
+                        map: map,
+                        var_name: var_name.clone(),
+                        dec_type: p_type.clone(),
+                        rep_type: p_type.clone(),
+                        key: None,
+                        field_decls: None,
+                        contents: None,
+                    } // Ready to write this var decl.
+                }
+                RepType::HashCodeStruct(ty_string) => {
+                    let mut tmp =
+                        TopLevlDecl {
+                            map: map,
+                            var_name: var_name.clone(),
+                            dec_type: ty_string.clone(),
+                            rep_type: String::from("hashcode"),
+                            key: Some(ty_string.clone()),
+                            field_decls: Some(Vec::new()),
+                            contents: None,
+                        };
+                    tmp.build_fields(depth_limit);
+                    tmp
+                }
+                RepType::PrimArray(p_type) => {
+                    TopLevlDecl {
+                        map: map,
+                        var_name: var_name.clone(),
+                        dec_type: format!("{}[]", p_type),
+                        rep_type: String::from("hashcode"),
+                        key: None,
+                        field_decls: None,
+                        contents: Some(ArrayContents {
+                            map: map,
+                            var_name: format!("{}[..]", var_name),
+                            dec_type: format!("{}[]", p_type),
+                            rep_type: format!("{}[]", p_type),
+                            enclosing_var: var_name.clone(),
+                            key: None,
+                            sub_contents: None,
+                        }) // Ready to write this var_decl.
+                    }
+                }
+                RepType::HashCodeArray(ty_string) => {
+                    let mut tmp =
+                        TopLevlDecl {
+                            map: map,
+                            var_name: var_name.clone(),
+                            dec_type: format!("{}[]", ty_string),
+                            rep_type: String::from("hashcode"),
+                            key: Some(ty_string.clone()),
+                            field_decls: None,
+                            contents: Some(ArrayContents {
+                                map: map,
+                                var_name: format!("{}[..]", var_name),
+                                dec_type: format!("{}[]", ty_string),
+                                rep_type: String::from("hashcode[]"),
+                                enclosing_var: var_name.clone(),
+                                key: Some(ty_string.clone()),
+                                sub_contents: Some(Vec::new())
+                            })
+                        };
+                    match &mut tmp.contents {
+                        None => panic!(""),
+                        Some(contents) => {
+                            contents.build_contents(depth_limit - 1);
+                        }
+                    }
+                    tmp
+                }
+            };
+        var_decls.push(toplevl_decl);
+        i += 1;
     }
 
-    // need some state to remember declarations you wrote for entry?
-    // fn grok_fn_body(&mut self, _body: &P<Block>, _ret_ty: &BasicType) {
-
-    // }
+    var_decls
 }
 
 impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
@@ -872,23 +1584,26 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
             FnKind::Fn(_, _, f) => {
                 if !f.ident.as_str().starts_with("dtrace") {
                     let ppt_name = String::from(f.ident.as_str());
-                    self.write_entry(ppt_name.clone());
-                    let _var_decls = self.grok_fn_sig(&f.sig.decl);
-                    // TODO: probably map params again to know which var decls
-                    //       to make nonsensical when you find invalidating stmts.
-                    // TODO: implement var_decls[i].write(); to allow the visitor to
-                    //       avoid thinking about any of that logic. can remove File
-                    //       field.
-                    // let ret_ty = match &f.sig.decl.output {
-                    //     FnRetTy::Default(_) => BasicType::NoRet,
-                    //     FnRetTy::Ty(ty) => get_basic_type(&ty.kind)
-                    // };
+                    write_entry(ppt_name.clone());
+                    let param_to_block_idx = map_params(&f.sig.decl);
+                    let mut param_decls = grok_fn_sig(&f.sig.decl, self.map, self.depth_limit);
+                    let mut i = 0;
+                    while i < param_decls.len() {
+                        param_decls[i].write();
+                        i += 1;
+                    }
+                    write_newline();
                     match &f.body {
                         None => {}
-                        Some(_body) => {
+                        Some(body) => {
                             // By now, all exit ppts are
                             // explicit Semi(Ret) stmts.
                             // self.grok_fn_body(body, &ret_ty);
+                            self.grok_fn_body(ppt_name.clone(),
+                                              body,
+                                              &mut param_decls,
+                                              param_to_block_idx,
+                                              &f.sig.decl.output);
                         }
                     }
                 }
@@ -896,6 +1611,16 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
             _ => {}
         }
         visit::walk_fn(self, fk);
+    }
+}
+
+static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::new(dtrace_open()));
+fn dtrace_open() -> Option<std::fs::File> {
+    match std::fs::File::options().append(true).open("main.decls") {
+        Err(why) => {
+            panic!("Daikon couldn't open file, {}", why);
+        }
+        Ok(decls) => Some(decls),
     }
 }
 
@@ -946,11 +1671,9 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                 Err(why) => panic!("couldn't create main.dtrace, {}", why),
                 _ => {}
             }
-            let mut decls = match std::fs::File::options().append(true).open("main.decls") {
-                Err(why) => panic!("Daikon couldn't open file, {}", why),
-                Ok(decls) => decls,
-            };
-            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, decls: &mut decls, depth_limit: 3 };
+            write_header();
+            write_newline();
+            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 3 };
             decls_visitor.visit_crate(&krate);
         }
 
