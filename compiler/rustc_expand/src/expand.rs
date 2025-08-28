@@ -527,25 +527,26 @@ fn get_prim_rep_type(ty_str: &str) -> String {
 // }
 
 // Will need to adjust this to get rep/dec types
-// fn grok_vec_args(path: &Path) -> BasicType {
-//     match &path.segments[path.segments.len() - 1].args {
-//         None => BasicType::Error,
-//         Some(args) => match &**args {
-//             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
-//                 AngleBracketedArg::Arg(arg) => match &arg {
-//                     GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind) {
-//                         BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
-//                         BasicType::UserDef => BasicType::UserDefVec,
-//                         _ => BasicType::Error,
-//                     },
-//                     _ => BasicType::Error,
-//                 },
-//                 _ => BasicType::Error,
-//             },
-//             _ => BasicType::Error,
-//         },
-//     }
-// }
+fn grok_vec_args(path: &Path) -> RepType {
+    let mut is_ref = false;
+    match &path.segments[path.segments.len() - 1].args {
+        None => panic!("Vec args has no type name"),
+        Some(args) => match &**args {
+            GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
+                AngleBracketedArg::Arg(arg) => match &arg {
+                    GenericArg::Type(arg_type) => match &get_rep_type(&arg_type.kind, &mut is_ref) {
+                        RepType::Prim(arg_p_type) => RepType::PrimArray(arg_p_type.to_string()),
+                        RepType::HashCodeStruct(struct_type) => RepType::HashCodeArray(struct_type.to_string()),
+                        _ => panic!("Multi-dim vec/array not supported"),
+                    },
+                    _ => panic!("Grok args failed 1"),
+                },
+                _ => panic!("Grok args failed 2"),
+            },
+            _ => panic!("Grok args failed 3"),
+        },
+    }
+}
 
 #[allow(dead_code)]
 #[derive(PartialEq)]
@@ -576,7 +577,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
             }
             if ty_string == VEC {
                 // TODO
-                todo!();
+                return grok_vec_args(&path);
             }
             return RepType::HashCodeStruct(String::from(ty_string));
         }
@@ -762,7 +763,7 @@ impl<'a> ArrayContents<'a> {
                         ArrayContents {
                             map: self.map,
                             var_name: var_name.clone(),
-                            dec_type: String::from("<higher dim array>"),
+                            dec_type: String::from("<higher-dim-array>"),
                             rep_type: String::from("hashcode[]"),
                             enclosing_var: self.var_name.clone(),
                             key: None, // we shouldn't be using this in write.
@@ -773,7 +774,7 @@ impl<'a> ArrayContents<'a> {
                         ArrayContents {
                             map: self.map,
                             var_name: var_name.clone(),
-                            dec_type: String::from("<higher dim array>"),
+                            dec_type: String::from("<higher-dim-array>"),
                             rep_type: String::from("hashcode[]"),
                             enclosing_var: self.var_name.clone(),
                             key: None,
@@ -1616,9 +1617,9 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
 
 static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::new(dtrace_open()));
 fn dtrace_open() -> Option<std::fs::File> {
-    match std::fs::File::options().append(true).open("main.decls") {
+    match std::fs::File::options().write(true).append(true).open(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.decls")) {
         Err(why) => {
-            panic!("Daikon couldn't open file, {}", why);
+            panic!("Daikon couldn't open file oh no, oh no. {}", why);
         }
         Ok(decls) => Some(decls),
     }
@@ -1663,11 +1664,11 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             map_builder.visit_crate(&krate);
 
             // create or overwrite main.decls and main.dtrace
-            match std::fs::File::create("main.decls") {
+            match std::fs::File::create(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.decls")) {
                 Err(why) => panic!("couldn't create main.decls, {}", why),
                 _ => {}
             }
-            match std::fs::File::create("main.dtrace") {
+            match std::fs::File::create(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.dtrace")) {
                 Err(why) => panic!("couldn't create main.dtrace, {}", why),
                 _ => {}
             }
@@ -1675,6 +1676,15 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             write_newline();
             let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 3 };
             decls_visitor.visit_crate(&krate);
+
+            // sync doesn't help.
+            match &*DECLS.lock().unwrap() {
+                None => panic!("1681"),
+                Some(decls) => match &decls.sync_all() {
+                    Err(_) => panic!("Can't sync"),
+                    Ok(_) => {}
+                }
+            }
         }
 
 
