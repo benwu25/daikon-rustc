@@ -548,7 +548,6 @@ fn grok_vec_args(path: &Path) -> RepType {
     }
 }
 
-#[allow(dead_code)]
 #[derive(PartialEq)]
 enum RepType {
     Prim(String),
@@ -560,7 +559,16 @@ enum RepType {
 // who gets hashcode[]
 fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
     match &kind {
-        TyKind::Array(_arr_type, _) => todo!(), // PrimArray(p_type) or HashCodeArray(ty_string)
+        TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref) {
+            RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
+            RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
+            _ => panic!("higher-dim arrays not supported")
+        }
+        TyKind::Slice(arr_type) => match &get_rep_type(&arr_type.kind, is_ref) {
+            RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
+            RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
+            _ => panic!("higher-dim arrays not supported")
+        }
         TyKind::Ptr(_) => todo!(),
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
@@ -621,13 +629,11 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
 }
 
 #[allow(rustc::default_hash_types)]
-#[allow(dead_code)]
 struct DaikonDeclsVisitor<'a> {
     pub map: &'a HashMap<String, P<Item>>,
     pub depth_limit: u32,
 }
 
-#[allow(dead_code)]
 #[allow(rustc::default_hash_types)]
 struct TopLevlDecl<'a> {
     pub map: &'a HashMap<String, P<Item>>,
@@ -639,7 +645,6 @@ struct TopLevlDecl<'a> {
     pub contents: Option<ArrayContents<'a>>
 }
 
-#[allow(dead_code)]
 #[allow(rustc::default_hash_types)]
 struct FieldDecl<'a> {
     pub map: &'a HashMap<String, P<Item>>,
@@ -653,7 +658,6 @@ struct FieldDecl<'a> {
     pub contents: Option<ArrayContents<'a>>,
 }
 
-#[allow(dead_code)]
 #[allow(rustc::default_hash_types)]
 struct ArrayContents<'a> {
     pub map: &'a HashMap<String, P<Item>>,
@@ -670,6 +674,10 @@ impl<'a> ArrayContents<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
+                if self.var_name == "false" {
+                    return;
+                }
+
                 writeln!(decls, "variable {}", self.var_name).ok();
                 writeln!(decls, "  var-kind array").ok();
                 writeln!(decls, "  enclosing-var {}", self.enclosing_var).ok();
@@ -692,14 +700,18 @@ impl<'a> ArrayContents<'a> {
         }
     }
 
-    fn get_fields(&self) -> ThinVec<FieldDef> {
+    fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
         match &self.key {
             None => panic!("No key for get_fields"),
             Some(key) => {
                 let struct_item = self.map.get(key);
                 match &struct_item {
-                    None => panic!("No struct in get_fields"),
+                    None => {
+                        // This is an Enum or Union or ?
+                        *do_write = false;
+                        ThinVec::new()
+                    }
                     Some(struct_item) => match &struct_item.kind {
                         ItemKind::Struct(_, _, variant_data) => match variant_data {
                             VariantData::Struct { fields, recovered: _ } => {
@@ -716,13 +728,16 @@ impl<'a> ArrayContents<'a> {
 
     // TODO: only ArrayContents should have this method, makes more sense that way.
     // very similar to build_fields, different cases depending on RepType
-    fn build_contents(&mut self, depth_limit: u32) {
+    fn build_contents(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
             return;
         }
 
         // fields of the struct in this array
-        let fields = self.get_fields();
+        let fields = self.get_fields(do_write);
+        if !*do_write {
+            return;
+        }
 
         let mut i = 0;
         while i < fields.len() {
@@ -732,6 +747,7 @@ impl<'a> ArrayContents<'a> {
             };
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
+            let mut do_write = true;
             let var_decl =
                 match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
                     RepType::Prim(p_type) => {
@@ -756,7 +772,26 @@ impl<'a> ArrayContents<'a> {
                                 key: Some(ty_string.clone()),
                                 sub_contents: Some(Vec::new())
                             };
-                        tmp.build_contents(depth_limit - 1);
+                        tmp.build_contents(depth_limit - 1, &mut do_write);
+
+                        // Error checking
+                        if !do_write {
+                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                            match &mut tmp.sub_contents {
+                                None => panic!("Expected some field_decls 1"),
+                                Some(sub_contents) => {
+                                    let mut j = 0;
+                                    while j < sub_contents.len() {
+                                        sub_contents[j].var_name = String::from("false");
+                                        j += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                            // this record is also invalid
+                            tmp.var_name = String::from("false");
+                        }
                         tmp
                     }
                     RepType::PrimArray(_) => { // only print pointers
@@ -799,6 +834,10 @@ impl<'a> FieldDecl<'a> {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
+                if self.var_name == "false" {
+                    return;
+                }
+
                 writeln!(decls, "variable {}", self.var_name).ok();
                 writeln!(decls, "  var-kind field {}", self.field_name).ok();
                 writeln!(decls, "  enclosing-var {}", self.enclosing_var).ok();
@@ -827,14 +866,17 @@ impl<'a> FieldDecl<'a> {
         }
     }
 
-    fn get_fields(&self) -> ThinVec<FieldDef> {
+    fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
         match &self.key {
             None => panic!("No key for get_fields"),
             Some(key) => {
                 let struct_item = self.map.get(key);
                 match &struct_item {
-                    None => panic!("No struct in get_fields"),
+                    None => {
+                        *do_write = false;
+                        ThinVec::new()
+                    }
                     Some(struct_item) => match &struct_item.kind {
                         ItemKind::Struct(_, _, variant_data) => match variant_data {
                             VariantData::Struct { fields, recovered: _ } => {
@@ -849,13 +891,17 @@ impl<'a> FieldDecl<'a> {
         }
     }
 
-    fn build_fields(&mut self, depth_limit: u32) {
+    fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
             // Invalidate ourselves for writing? Or will writing stop too...
             return;
         }
 
-        let fields = self.get_fields();
+        let fields = self.get_fields(do_write);
+        if !*do_write {
+            return;
+        }
+        // do we really need error checking after this? maybe, cause you can have Vec<Struct> where Struct has an Enum field,
 
         let mut i = 0;
         while i < fields.len() {
@@ -865,6 +911,7 @@ impl<'a> FieldDecl<'a> {
             };
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
+            let mut do_write = true;
             let var_decl =
                 match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
                     RepType::Prim(p_type) => {
@@ -893,7 +940,26 @@ impl<'a> FieldDecl<'a> {
                                 field_decls: Some(Vec::new()),
                                 contents: None,
                             };
-                        tmp.build_fields(depth_limit - 1);
+                        tmp.build_fields(depth_limit - 1, &mut do_write);
+
+                        // Error checking
+                        if !do_write {
+                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                            match &mut tmp.field_decls {
+                                None => panic!("Expected some field_decls 1"),
+                                Some(field_decls) => {
+                                    let mut j = 0;
+                                    while j < field_decls.len() {
+                                        field_decls[j].var_name = String::from("false");
+                                        j += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                            // this record is also invalid
+                            tmp.var_name = String::from("false");
+                        }
                         tmp
                     }
                     RepType::PrimArray(p_type) => {
@@ -941,7 +1007,26 @@ impl<'a> FieldDecl<'a> {
                         match &mut tmp.contents {
                             None => panic!(""),
                             Some(contents) => {
-                                contents.build_contents(depth_limit - 1);
+                                contents.build_contents(depth_limit - 1, &mut do_write);
+
+                                // Error checking
+                                if !do_write {
+                                    // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                                    match &mut contents.sub_contents {
+                                        None => panic!("Expected some field_decls 1"),
+                                        Some(sub_contents) => {
+                                            let mut j = 0;
+                                            while j < sub_contents.len() {
+                                                sub_contents[j].var_name = String::from("false");
+                                                j += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                                    // this record is also invalid
+                                    tmp.var_name = String::from("false");
+                                }
                             }
                         }
                         tmp
@@ -960,12 +1045,14 @@ impl<'a> FieldDecl<'a> {
 }
 
 impl<'a> TopLevlDecl<'a> {
-    #[allow(dead_code)]
     fn write(&mut self) {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
             Some(decls) => {
-                // TODO: implement this, manually construct one with something from library-daikon/main.decls, and test write. Then just step through exit points and call write.
+                if self.var_name == "false" {
+                    return;
+                }
+
                 writeln!(decls, "variable {}", self.var_name).ok();
                 writeln!(decls, "  var-kind variable").ok();
                 writeln!(decls, "  dec-type {}", self.dec_type).ok();
@@ -994,13 +1081,16 @@ impl<'a> TopLevlDecl<'a> {
         }
     }
 
-    fn build_fields(&mut self, depth_limit: u32) {
+    fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
             // Invalidate ourselves for writing? Or will writing stop too...
             return;
         }
 
-        let fields = self.get_fields();
+        let fields = self.get_fields(do_write);
+        if !*do_write {
+            return;
+        }
 
         let mut i = 0;
         while i < fields.len() {
@@ -1010,6 +1100,7 @@ impl<'a> TopLevlDecl<'a> {
             };
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
+            let mut do_write = true;
             let var_decl =
                 match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
                     RepType::Prim(p_type) => {
@@ -1038,7 +1129,26 @@ impl<'a> TopLevlDecl<'a> {
                                 field_decls: Some(Vec::new()),
                                 contents: None,
                             };
-                        tmp.build_fields(depth_limit - 1);
+                        tmp.build_fields(depth_limit - 1, &mut do_write);
+
+                        // Error checking
+                        if !do_write {
+                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                            match &mut tmp.field_decls {
+                                None => panic!("Expected some field_decls 1"),
+                                Some(field_decls) => {
+                                    let mut j = 0;
+                                    while j < field_decls.len() {
+                                        field_decls[j].var_name = String::from("false");
+                                        j += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                            // this record is also invalid
+                            tmp.var_name = String::from("false");
+                        }
                         tmp
                     }
                     RepType::PrimArray(p_type) => {
@@ -1086,7 +1196,27 @@ impl<'a> TopLevlDecl<'a> {
                         match &mut tmp.contents {
                             None => panic!(""),
                             Some(contents) => {
-                                contents.build_contents(depth_limit - 1);
+                                contents.build_contents(depth_limit - 1, &mut do_write);
+
+                                // Error checking
+                                if !do_write {
+                                    // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
+                                    match &mut contents.sub_contents {
+                                        None => panic!("Expected some field_decls 1"),
+                                        Some(sub_contents) => {
+                                            let mut j = 0;
+                                            while j < sub_contents.len() {
+                                                sub_contents[j].var_name = String::from("false");
+                                                j += 1;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                                    // this record is also invalid
+                                    tmp.var_name = String::from("false");
+                                }
                             }
                         }
                         tmp
@@ -1103,15 +1233,17 @@ impl<'a> TopLevlDecl<'a> {
         }
     }
 
-    #[allow(dead_code)]
-    fn get_fields(&self) -> ThinVec<FieldDef> {
+    fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
         match &self.key {
             None => panic!("No key for get_fields"),
             Some(key) => {
                 let struct_item = self.map.get(key);
                 match &struct_item {
-                    None => panic!("No struct in get_fields"),
+                    None => {
+                        *do_write = false;
+                        ThinVec::new()
+                    }
                     Some(struct_item) => match &struct_item.kind {
                         ItemKind::Struct(_, _, variant_data) => match variant_data {
                             VariantData::Struct { fields, recovered: _ } => {
@@ -1319,7 +1451,6 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         param_decls[idx].write();
                         idx += 1;
                     }
-                    write_newline();
 
                     // make return TopLevlDecl
                     match &ret_ty {
@@ -1327,6 +1458,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                         FnRetTy::Ty(ty) => {
                             let var_name = String::from("return");
                             let mut is_ref = false;
+                            let mut do_write = true;
                             let mut return_decl =
                                 match &get_rep_type(&ty.kind, &mut is_ref) {
                                     RepType::Prim(p_type) => {
@@ -1341,6 +1473,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         } // Ready to write this var decl.
                                     }
                                     RepType::HashCodeStruct(ty_string) => {
+                                        // do_write = !ty_string.starts_with("Option") && !ty_string.starts_with("Result");
+                                        // println!("do_write is {} for {}", do_write, ty_string);
                                         let mut tmp =
                                             TopLevlDecl {
                                                 map: self.map,
@@ -1351,7 +1485,26 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                                 field_decls: Some(Vec::new()),
                                                 contents: None,
                                             };
-                                        tmp.build_fields(self.depth_limit);
+                                        tmp.build_fields(self.depth_limit, &mut do_write);
+
+                                        // Error checking
+                                        if !do_write {
+                                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                                            match &mut tmp.field_decls {
+                                                None => panic!("Expected some field_decls 1"),
+                                                Some(field_decls) => {
+                                                    let mut j = 0;
+                                                    while j < field_decls.len() {
+                                                        field_decls[j].var_name = String::from("false");
+                                                        j += 1;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                                            // this record is also invalid
+                                            tmp.var_name = String::from("false");
+                                        }
                                         tmp
                                     }
                                     RepType::PrimArray(p_type) => {
@@ -1395,7 +1548,27 @@ impl<'a> DaikonDeclsVisitor<'a> {
                                         match &mut tmp.contents {
                                             None => panic!(""),
                                             Some(contents) => {
-                                                contents.build_contents(self.depth_limit - 1);
+                                                contents.build_contents(self.depth_limit - 1, &mut do_write);
+
+                                                // Error checking
+                                                if !do_write {
+                                                    // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
+                                                    match &mut contents.sub_contents {
+                                                        None => panic!("Expected some field_decls 1"),
+                                                        Some(sub_contents) => {
+                                                            let mut j = 0;
+                                                            while j < sub_contents.len() {
+                                                                sub_contents[j].var_name = String::from("false");
+                                                                j += 1;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                                                    // this record is also invalid
+                                                    tmp.var_name = String::from("false");
+                                                }
                                             }
                                         }
                                         tmp
@@ -1404,6 +1577,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                             return_decl.write();
                         }
                     }
+
+                    write_newline();
                     // probably:
                     i += 1;
 
@@ -1497,6 +1672,7 @@ fn grok_fn_sig<'a>(decl: &'a P<FnDecl>, map: &'a HashMap<String, P<Item>>, depth
 
         let var_name = get_param_ident(&decl.inputs[i].pat);
         let mut is_ref = false;
+        let mut do_write = true;
         // TODO: copy this code for getting a TopLevlDecl for the return value.
         let toplevl_decl =
             match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
@@ -1522,7 +1698,26 @@ fn grok_fn_sig<'a>(decl: &'a P<FnDecl>, map: &'a HashMap<String, P<Item>>, depth
                             field_decls: Some(Vec::new()),
                             contents: None,
                         };
-                    tmp.build_fields(depth_limit);
+                    tmp.build_fields(depth_limit, &mut do_write);
+
+                    // Error checking
+                    if !do_write {
+                        // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                        match &mut tmp.field_decls {
+                            None => panic!("Expected some field_decls 1"),
+                            Some(field_decls) => {
+                                let mut j = 0;
+                                while j < field_decls.len() {
+                                    field_decls[j].var_name = String::from("false");
+                                    j += 1;
+                                }
+                            }
+                        }
+                    }
+                    if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                        // this record is also invalid
+                        tmp.var_name = String::from("false");
+                    }
                     tmp
                 }
                 RepType::PrimArray(p_type) => {
@@ -1566,7 +1761,27 @@ fn grok_fn_sig<'a>(decl: &'a P<FnDecl>, map: &'a HashMap<String, P<Item>>, depth
                     match &mut tmp.contents {
                         None => panic!(""),
                         Some(contents) => {
-                            contents.build_contents(depth_limit - 1);
+                            contents.build_contents(depth_limit - 1, &mut do_write);
+
+                            // Error checking: note for this and similar, tmp.contents valid is equivalent to tmp valid, if we have Vec of enums, contents is pointers.
+                            if !do_write {
+                                // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
+                                match &mut contents.sub_contents {
+                                    None => panic!("Expected some field_decls 1"),
+                                    Some(sub_contents) => {
+                                        let mut j = 0;
+                                        while j < sub_contents.len() {
+                                            sub_contents[j].var_name = String::from("false");
+                                            j += 1;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                                // this record is also invalid
+                                tmp.var_name = String::from("false");
+                            }
                         }
                     }
                     tmp
@@ -1617,12 +1832,14 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
 
 static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::new(dtrace_open()));
 fn dtrace_open() -> Option<std::fs::File> {
-    match std::fs::File::options().write(true).append(true).open(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.decls")) {
-        Err(why) => {
-            panic!("Daikon couldn't open file oh no, oh no. {}", why);
-        }
-        Ok(decls) => Some(decls),
-    }
+    // match std::fs::File::options().write(true).append(true).open(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.decls")) {
+    //     Err(why) => {
+    //         panic!("Daikon couldn't open file oh no, oh no. {}", why);
+    //     }
+    //     Ok(decls) => Some(decls),
+    // }
+    let decls = std::path::Path::new("main.decls");
+    Some(std::fs::File::options().write(true).append(true).open(&decls).unwrap())
 }
 
 pub struct MacroExpander<'a, 'b> {
@@ -1664,17 +1881,15 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             map_builder.visit_crate(&krate);
 
             // create or overwrite main.decls and main.dtrace
-            match std::fs::File::create(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.decls")) {
-                Err(why) => panic!("couldn't create main.decls, {}", why),
-                _ => {}
-            }
-            match std::fs::File::create(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.dtrace")) {
+            let decls = std::path::Path::new("main.decls");
+            std::fs::File::create(&decls).unwrap();
+            match std::fs::File::create(std::path::Path::new("main.dtrace")) {
                 Err(why) => panic!("couldn't create main.dtrace, {}", why),
                 _ => {}
             }
             write_header();
             write_newline();
-            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 3 };
+            let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace
             decls_visitor.visit_crate(&krate);
 
             // sync doesn't help.
