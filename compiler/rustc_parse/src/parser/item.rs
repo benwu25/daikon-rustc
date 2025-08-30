@@ -683,13 +683,13 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                         BasicType::Error => panic!("ret_ty is BasicType::Error")
                     }
 
-                    let ret = build_ret();
-                    i = self.insert_into_block(i, ret, body);
-
                     i = self.insert_into_block(i, dtrace_newline(), body);
 
                     let inc = build_inc(ppt_name.clone());
                     i = self.insert_into_block(i, inc, body);
+
+                    let ret = build_ret();
+                    i = self.insert_into_block(i, ret, body);
 
                     // remove old return stmt
                     body.stmts.remove(i); // will want to println! this to debug
