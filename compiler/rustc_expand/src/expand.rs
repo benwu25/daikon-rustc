@@ -1433,6 +1433,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
                     write_exit(ppt_name.clone(), *exit_counter);
+                    *exit_counter += 1;
                     let mut idx = 0;
                     while idx < param_decls.len() {
                         param_decls[idx].write();
@@ -1446,6 +1447,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 }
                 ExprKind::Ret(Some(_)) => {
                     write_exit(ppt_name.clone(), *exit_counter);
+                    *exit_counter += 1;
                     let mut idx = 0;
                     while idx < param_decls.len() {
                         param_decls[idx].write();
@@ -1586,9 +1588,9 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 ExprKind::Call(_call, _params) => { return i+1; } // Maybe check for drop and other invalidations
                 _ => { return i+1; } // other things you overlooked
             }
-            // non-block exprs are exit points, approximating this with a catch-all for non-semi exprs
-            StmtKind::Expr(_) => { // we know it is not a block, so it must be trailing no-semi return expr
-                panic!("There should be no non-semi returns left");
+            StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
+                ExprKind::Match(..) => { return i+1; }
+                _ => panic!("is this non-semi expr a return or a valid non-semi expr?")
             }
             _ => { return i+1; }
         }

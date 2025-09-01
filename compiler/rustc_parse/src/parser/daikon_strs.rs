@@ -37,41 +37,41 @@ pub static VEC: &str = "Vec";
 
 // placeholders are between the strs
 
-pub(crate) static DTRACE_ENTRY: [&str; 3] = ["fn __skip() { dtrace_entry(\"",
-                                             ":::ENTER\", *",
-                                             "_COUNTER.lock().unwrap()); }"];
+pub(crate) static INIT_NONCE: &str = "fn __skip() { let mut __daikon_nonce = 0;\nlet mut __unwrap_nonce = NONCE_COUNTER.lock().unwrap();\n__daikon_nonce = *__unwrap_nonce;\n*__unwrap_nonce += 1;\ndrop(__unwrap_nonce);\n }";
+pub(crate) fn init_nonce() -> String {
+    String::from(INIT_NONCE)
+}
+
+// TODO: before build_entry, initialize __daikon_nonce with the NONCE_COUNTER lock.
+pub(crate) static DTRACE_ENTRY: [&str; 2] = ["fn __skip() { dtrace_entry(\"",
+                                             ":::ENTER\", __daikon_nonce); }"];
 pub(crate) fn build_entry(ppt_name: String) -> String {
     let mut res = String::from(DTRACE_ENTRY[0]);
     res.push_str(&ppt_name);
     res.push_str(DTRACE_ENTRY[1]);
-    res.push_str(&ppt_name.to_uppercase());
-    res.push_str(DTRACE_ENTRY[2]);
     res
 }
 
-pub(crate) static DTRACE_EXIT: [&str; 4] = ["fn __skip() { dtrace_exit(\"",
+pub(crate) static DTRACE_EXIT: [&str; 3] = ["fn __skip() { dtrace_exit(\"",
                                            ":::EXIT",
-                                           "\", *",
-                                           "_COUNTER.lock().unwrap()); }"];
+                                           "\", __daikon_nonce); }"];
 pub(crate) fn build_exit(ppt_name: String, exit_counter: usize) -> String {
     let mut res = String::from(DTRACE_EXIT[0]);
     res.push_str(&ppt_name);
     res.push_str(DTRACE_EXIT[1]);
     res.push_str(&exit_counter.to_string());
     res.push_str(DTRACE_EXIT[2]);
-    res.push_str(&ppt_name.to_uppercase());
-    res.push_str(DTRACE_EXIT[3]);
     res
 }
 
-pub(crate) static INC: [&str; 2] = ["fn __skip() { *",
-                                    "_COUNTER.lock().unwrap() += 1; }"];
-pub(crate) fn build_inc(ppt_name: String) -> String {
-    let mut res = String::from(INC[0]);
-    res.push_str(&ppt_name.to_uppercase());
-    res.push_str(INC[1]);
-    res
-}
+// pub(crate) static INC: [&str; 2] = ["fn __skip() { *",
+//                                     "_COUNTER.lock().unwrap() += 1; }"];
+// pub(crate) fn build_inc(ppt_name: String) -> String {
+//     let mut res = String::from(INC[0]);
+//     res.push_str(&ppt_name.to_uppercase());
+//     res.push_str(INC[1]);
+//     res
+// }
 
 pub(crate) static DTRACE_PRIM: [&str; 4] = ["fn __skip() { dtrace_print_prim::<",
                                             ">(",
@@ -1089,27 +1089,25 @@ pub(crate) fn build_void_return() -> String {
     String::from(VOID_RETURN)
 }
 
-pub(crate) static NONCE_COUNTER: [&str; 2] = ["static ",
-                                              "_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(1));"];
-pub(crate) fn build_nonce_counter(ppt_name: String) -> String {
-    let mut res = String::from(NONCE_COUNTER[0]);
-    res.push_str(&ppt_name.to_uppercase());
-    res.push_str(NONCE_COUNTER[1]);
-    res
-}
+// pub(crate) static NONCE_COUNTER: [&str; 2] = ["static NONCE_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));"];
+// pub(crate) fn build_nonce_counter() -> String {
+//     String::from(NONCE_COUNTER)
+// }
 
 // TODO: why does Daikon error if main has a nonce of 1 with everything else?
-pub(crate) static MAIN_COUNTER: &str = "static MAIN_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));";
-pub(crate) fn build_main_counter() -> String {
-    String::from(MAIN_COUNTER)
-}
+// pub(crate) static MAIN_COUNTER: &str = "static MAIN_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));";
+// pub(crate) fn build_nonc() -> String {
+//     String::from(MAIN_COUNTER)
+// }
 
 pub(crate) static DTRACE_NEWLINE: &str = "fn __skip() { dtrace_newline(); }";
 pub(crate) fn dtrace_newline() -> String {
     String::from(DTRACE_NEWLINE)
 }
 
-pub(crate) static IMPORTS: &str = "use std::fs::File;\nuse std::io::prelude::*;\nuse std::sync::{LazyLock, Mutex};\nuse std::str::FromStr;";
+// this NONCE_COUNTER per-file is broken for multi-file non-concurrent programs. It has to be a single counter shared between all the files.
+// Difficult in Rust as there is no easy extern escape like in C. Maybe unsafe.
+pub(crate) static IMPORTS: &str = "use std::fs::File;\nuse std::io::prelude::*;\nuse std::sync::{LazyLock, Mutex};\nuse std::str::FromStr;\nstatic NONCE_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));";
 pub(crate) fn build_imports() -> String {
     String::from(IMPORTS)
 }

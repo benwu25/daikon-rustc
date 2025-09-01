@@ -10,13 +10,13 @@ use crate::parser::daikon_strs::{
     I8, I16, I32, I64, I128, ISIZE,
     U8, U16, U32, U64, U128, USIZE,
     F32, F64, CHAR, BOOL, UNIT, STR,
-    STRING, VEC, build_entry, build_prim,
+    STRING, VEC, build_entry, init_nonce, build_prim,
     build_userdef, build_exit, build_let_ret,
-    build_inc, build_ret, dtrace_print_fields_prologue,
+    build_ret, dtrace_print_fields_prologue,
     build_field_prim, build_field_userdef,
     dtrace_print_fields_epilogue, base_impl,
     build_phony_ret, build_void_return, daikon_lib,
-    build_imports, build_nonce_counter,
+    build_imports,
     build_userdef_with_ampersand_access,
     build_field_userdef_with_ampersand_access,
     build_field_prim_ref, build_prim_field_tostring,
@@ -35,7 +35,7 @@ use crate::parser::daikon_strs::{
     build_pointers_vec_userdef, build_dtrace_print_xfield_middle,
     build_print_vec_fields_for_field, build_dtrace_print_xfield_epilogue,
     build_daikon_tmp_vec_ampersand, build_tmp_vec_for_field_ampersand,
-    build_main_counter, build_print_xfield_for_vec,
+    build_print_xfield_for_vec,
     build_pointer_arr, build_dtrace_print_fields_noop,
     build_dtrace_print_fields_vec_noop, build_pointer_arr_userdef,
     build_prim_with_tostring_ret, build_prim_ref_ret, build_prim_ret,
@@ -474,6 +474,28 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                     exit_counter,
                                     daikon_tmp_counter);
                     return i+1;
+                }
+                ExprKind::Match(_, arms, _) => {
+                    let mut j = 0;
+                    while j < arms.len() {
+                        match &mut arms[j].body {
+                            None => {}
+                            Some(bd) => match &mut bd.kind {
+                                ExprKind::Block(_block, _) => {
+                                    // self.grok_block(ppt_name.clone(),
+                                    //                 block,
+                                    //                 dtrace_param_blocks,
+                                    //                 &param_to_block_idx,
+                                    //                 &ret_ty,
+                                    //                 exit_counter,
+                                    //                 daikon_tmp_counter);
+                                }
+                                _ => {} // TODO: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
+                            }
+                        }
+                        j += 1;
+                    }
+                    return i+1;
                 } // missing Match blocks, TryBlock, Const block? probably more
                 _ => {}
             }
@@ -492,8 +514,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
 
                     i = self.insert_into_block(i, dtrace_newline(), body);
 
-                    let inc = build_inc(ppt_name.clone());
-                    i = self.insert_into_block(i, inc, body);
+                    // let inc = build_inc(ppt_name.clone());
+                    // i = self.insert_into_block(i, inc, body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on
@@ -547,8 +569,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                                 println!("hi explicit option return");
                                 i = self.insert_into_block(i, dtrace_newline(), body);
 
-                                let inc = build_inc(ppt_name.clone());
-                                i = self.insert_into_block(i, inc, body);
+                                // let inc = build_inc(ppt_name.clone());
+                                // i = self.insert_into_block(i, inc, body);
                                 // i+1 because we are leaving the return stmt in.
                                 return i+1;
                             }
@@ -685,8 +707,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
 
                     i = self.insert_into_block(i, dtrace_newline(), body);
 
-                    let inc = build_inc(ppt_name.clone());
-                    i = self.insert_into_block(i, inc, body);
+                    // let inc = build_inc(ppt_name.clone());
+                    // i = self.insert_into_block(i, inc, body);
 
                     let ret = build_ret();
                     i = self.insert_into_block(i, ret, body);
@@ -751,8 +773,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                             println!("hello");
                             i = self.insert_into_block(i, dtrace_newline(), body);
 
-                            let inc = build_inc(ppt_name.clone());
-                            i = self.insert_into_block(i, inc, body);
+                            // let inc = build_inc(ppt_name.clone());
+                            // i = self.insert_into_block(i, inc, body);
                             // i+1 because we are leaving the return stmt in.
                             return i+1;
                         }
@@ -888,8 +910,8 @@ impl<'a> DaikonImplInserterVisitor<'a> {
 
                 i = self.insert_into_block(i, dtrace_newline(), body);
 
-                let inc = build_inc(ppt_name.clone());
-                i = self.insert_into_block(i, inc, body);
+                // let inc = build_inc(ppt_name.clone());
+                // i = self.insert_into_block(i, inc, body);
 
                 let ret = build_ret();
                 i = self.insert_into_block(i, ret, body);
@@ -1579,6 +1601,15 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     daikon_tmp_counter: &mut u32) {
         //let original_len = body.stmts.len();
         let mut i = 0;
+
+        // update how you do nonces:
+        //   lock a global counter (you only need one)
+        //     store its current value
+        //     increment it
+        //   unlock
+        //   use the stored value at all exit points.
+        i = self.insert_into_block(i, init_nonce(), body);
+
         let entry = build_entry(ppt_name.clone());
         i = self.insert_into_block(i, entry, body);
         for param_block in &mut *dtrace_param_blocks {
@@ -1639,21 +1670,21 @@ impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
                     return;
                 }
                 println!("now doing: {}", ppt_name);
-                let counter =
-                    if ppt_name == "main" {
-                        build_main_counter()
-                    } else {
-                        build_nonce_counter(ppt_name.clone())
-                    };
-                match &self.parser.parse_items_from_string(counter) {
-                    Err(_why) => panic!("Can't parse nonce counter"),
-                    Ok(items) => {
-                        for item in items {
-                            println!("counter:\n{}\n\n", pprust::item_to_string(&item));
-                            self.mod_items.push(item.clone());
-                        }
-                    }
-                }
+                // let counter =
+                //     if ppt_name == "main" {
+                //         build_main_counter()
+                //     } else {
+                //         build_nonce_counter(ppt_name.clone())
+                //     };
+                // match &self.parser.parse_items_from_string(counter) {
+                //     Err(_why) => panic!("Can't parse nonce counter"),
+                //     Ok(items) => {
+                //         for item in items {
+                //             println!("counter:\n{}\n\n", pprust::item_to_string(&item));
+                //             self.mod_items.push(item.clone());
+                //         }
+                //     }
+                // }
                 let mut daikon_tmp_counter = 0;
                 // get block of dtrace chunks -- one for each param
                 let mut dtrace_param_blocks = self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
