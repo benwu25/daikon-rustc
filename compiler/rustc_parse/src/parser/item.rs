@@ -3,6 +3,7 @@ use std::mem;
 
 use std::sync::{LazyLock, Mutex};
 use rustc_ast::mut_visit::*;
+use std::io::Write as FileWrite;
 use rustc_ast::*;
 use std::collections::HashMap;
 use crate::unwrap_or_emit_fatal;
@@ -76,7 +77,7 @@ use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 /*
    Visitor for defining struct-specific routines
 */
-struct DaikonImplInserterVisitor<'a> {
+struct DaikonDtraceVisitor<'a> {
     // For parsing string fragments
     pub parser: &'a Parser<'a>,
 
@@ -296,7 +297,7 @@ fn last_stmt_is_void_return(block: &P<Block>) -> bool {
     }
 }
 
-impl<'a> DaikonImplInserterVisitor<'a> {
+impl<'a> DaikonDtraceVisitor<'a> {
     fn append_to_block(&self, stuff: String, block: &mut P<Block>) {
         match &self.parser.parse_items_from_string(stuff.clone()) {
             Err(_why) => panic!("Parsing internal String failed"),
@@ -513,9 +514,6 @@ impl<'a> DaikonImplInserterVisitor<'a> {
                     }
 
                     i = self.insert_into_block(i, dtrace_newline(), body);
-
-                    // let inc = build_inc(ppt_name.clone());
-                    // i = self.insert_into_block(i, inc, body);
 
                     // we're sitting on the void return we just processed, so inc
                     // to move on
@@ -1649,7 +1647,7 @@ impl<'a> DaikonImplInserterVisitor<'a> {
     }
 }
 
-impl<'a> MutVisitor for DaikonImplInserterVisitor<'a> {
+impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     /*
         We should process the whole function at this point. It seems
         like a bad idea to rely on some other component of the visitor
@@ -2129,12 +2127,19 @@ impl<'a> Parser<'a> {
 
         if *DO_VISITOR.lock().unwrap() {
 
-            // TODO: implement
             // do all mutation things
             let mut items_to_append: ThinVec<P<Item>> = ThinVec::new();
             let mut impl_inserter =
-                DaikonImplInserterVisitor { parser: &self, mod_items: &mut items_to_append };
+                DaikonDtraceVisitor { parser: &self, mod_items: &mut items_to_append };
             mut_visit::visit_items(&mut impl_inserter, &mut items);
+
+            // pretty print the instrumented code (without library/imports) for testing
+            let mut pp = std::fs::File::options().create(true).write(true).append(true).open(std::path::Path::new("/home/benwu25/Downloads/daikon-rustc/daikon-tests/tests/main.pp")).unwrap();
+            let mut i = 0;
+            while i < items.len() {
+                writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
+                i += 1;
+            }
 
             // push daikon library and items_to_append to items.
             match &self.parse_items_from_string(daikon_lib()) {
@@ -2161,14 +2166,7 @@ impl<'a> Parser<'a> {
                 i += 1;
             }
 
-            let mut i = 0;
-            while i < items.len() {
-                // TODO: pretty print to a file so it's more clear this is working.
-                println!("{}\n", pprust::item_to_string(&items[i]));
-                i += 1;
-            }
-
-        } else if do_noop {
+        } else if do_noop { // TODO: remove this an implement a first pass with a /tmp file (or equivalent for Windows)
             println!("hullo.");
             let mut items_to_append: ThinVec<P<Item>> = ThinVec::new();
 
