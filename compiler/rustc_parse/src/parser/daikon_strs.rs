@@ -66,15 +66,6 @@ pub(crate) fn build_exit(ppt_name: String, exit_counter: usize) -> String {
     res
 }
 
-// pub(crate) static INC: [&str; 2] = ["fn __skip() { *",
-//                                     "_COUNTER.lock().unwrap() += 1; }"];
-// pub(crate) fn build_inc(ppt_name: String) -> String {
-//     let mut res = String::from(INC[0]);
-//     res.push_str(&ppt_name.to_uppercase());
-//     res.push_str(INC[1]);
-//     res
-// }
-
 pub(crate) static DTRACE_PRIM: [&str; 4] = ["fn __skip() { dtrace_print_prim::<",
                                             ">(",
                                             ", String::from(\"",
@@ -128,30 +119,6 @@ pub(crate) fn build_prim_ref_ret(p_type: String) -> String {
     res.push_str(DTRACE_PRIM_REF_RET[2]);
     res
 }
-
-// pub(crate) static DTRACE_PLAIN_POINTER: [&str; 3] = ["fn __skip() { dtrace_print_pointer(",
-//                                                      " as *const _ as usize, String::from(\"",
-//                                                      "\")); }"];
-// pub(crate) fn build_plain_pointer(var_name: String) -> String {
-//     let mut res = String::from(DTRACE_PLAIN_POINTER[0]);
-//     res.push_str(&var_name);
-//     res.push_str(DTRACE_PLAIN_POINTER[1]);
-//     res.push_str(&var_name);
-//     res.push_str(DTRACE_PLAIN_POINTER[2]);
-//     res
-// }
-
-// pub(crate) static DTRACE_PLAIN_POINTER_FIELD: [&str; 3] = ["fn __skip() { dtrace_print_pointer(self.",
-//                                                                 " as *const _ as usize, format!(\"{}{}\", prefix, \".",
-//                                                                 "\")); }"];
-// pub(crate) fn build_plain_pointer_field(field_name: String) -> String {
-//     let mut res = String::from(DTRACE_PLAIN_POINTER_FIELD[0]);
-//     res.push_str(&field_name);
-//     res.push_str(DTRACE_PLAIN_POINTER_FIELD[1]);
-//     res.push_str(&field_name);
-//     res.push_str(DTRACE_PLAIN_POINTER_FIELD[2]);
-//     res
-// }
 
 pub(crate) static DTRACE_PRIM_TOSTRING: [&str; 3] = ["fn __skip() { dtrace_print_string(",
                                             ".to_string(), String::from(\"",
@@ -218,21 +185,6 @@ pub(crate) fn build_field_prim_ref(p_type: String, field_name: String) -> String
     res.push_str(DTRACE_PRIM_REF_STRUCT[4]);
     res
 }
-
-// pub(crate) static DTRACE_PRIM_STRUCT_CLONE: [&str; 4] = ["dtrace_print_prim::<",
-//                                                   ">(self.",
-//                                                   ", format!(\"{}{}\", prefix, \".",
-//                                                   "\"));"];
-// pub(crate) fn build_field_prim_with_clone_access(p_type: String, field_name: String) -> String { // TODO: change name
-//     let mut res = String::from(DTRACE_PRIM_STRUCT_CLONE[0]);
-//     res.push_str(&p_type);
-//     res.push_str(DTRACE_PRIM_STRUCT_CLONE[1]);
-//     res.push_str(&format!("{}.clone()", field_name));
-//     res.push_str(DTRACE_PRIM_STRUCT_CLONE[2]);
-//     res.push_str(&field_name);
-//     res.push_str(DTRACE_PRIM_STRUCT_CLONE[3]);
-//     res
-// }
 
 pub(crate) static DTRACE_USERDEF: [&str; 6] = ["fn __skip() { dtrace_print_pointer(",
                                                " as *const _ as usize, String::from(\"",
@@ -401,19 +353,6 @@ pub(crate) fn build_print_pointer_vec(basic_type: String, tmp_name: String, var_
     res.push_str(DTRACE_PRINT_POINTER_VEC[3]);
     res
 }
-
-// tried to reuse above instead.
-// pub(crate) static DTRACE_PRINT_POINTER_VEC_RET: [&str; 3] = ["dtrace_print_pointer_vec::<",
-//                                                             ">(&",
-//                                                             ", format!(\"{}{}\", \"return\", \"[..]\"));"];
-// pub(crate) build_print_pointer_vec_ret(basic_type: String, tmp_name: String) -> String {
-//     let mut res = String::from(DTRACE_PRINT_POINTER_VEC_RET[0]);
-//     res.push_str(&basic_type);
-//     res.push_str(DTRACE_PRINT_POINTER_VEC_RET[1]);
-//     res.push_str(&tmp_name);
-//     res.push_str(DTRACE_PRINT_POINTER_VEC_RET[2]);
-//     res
-// }
 
 pub(crate) static DTRACE_VEC_FIELDS: [&str; 3] = ["::dtrace_print_fields_vec(&",
                                                   ", 3, format!(\"{}{}\", String::from(\"",
@@ -862,9 +801,9 @@ pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String)
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[2]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_VEC[3]);
     res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(DTRACE_PRINT_XFIELDS_VEC[3]);
+    res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[4]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[5]);
@@ -952,9 +891,9 @@ pub(crate) fn build_print_xfield(field_name: String, basic_type: String) -> Stri
     res.push_str(DTRACE_PRINT_XFIELDS[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS[2]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS[3]);
     res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(DTRACE_PRINT_XFIELDS[3]);
+    res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS[4]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS[5]);
@@ -989,9 +928,9 @@ pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) 
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[1]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[2]);
-    res.push_str(&field_name);
-    res.push_str(DTRACE_PRINT_XFIELDS_STRING[3]);
     res.push_str(&*OUTPUT_NAME.lock().unwrap());
+    res.push_str(DTRACE_PRINT_XFIELDS_STRING[3]);
+    res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[4]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[5]);
@@ -1058,26 +997,6 @@ pub(crate) fn build_print_string_vec(tmp_name: String, var_name: String) -> Stri
     res
 }
 
-// reusing above.
-// pub(crate) static DTRACE_PRINT_PRIM_VEC_RET: [&str; ] = ["dtrace_print_prim_vec::<",
-//                                                          ">(&",
-//                                                          ", String::from(\"return\")); }"];
-// pub(crate) fn build_print_prim_vec_ret(p_type: String, tmp_name: String) -> String {
-//     let mut res = String::from(DTRACE_PRINT_PRIM_VEC_RET[0]);
-//     res.push_str(&p_type);
-//     res.push_str(DTRACE_PRINT_PRIM_VEC_RET[1]);
-//     res.push_str(&tmp_name);
-//     res.push_str(DTRACE_PRINT_PRIM_VEC_RET[2]);
-//     res
-// }
-
-// pub(crate) static DTRACE_PRINT_XFIELD_PROLOGUE: &str = "impl __skip {";
-// pub(crate) fn dtrace_print_xfield_prologue() -> String {
-//     String::from(DTRACE_PRINT_XFIELD_PROLOGUE)
-// }
-
-
-
 pub(crate) static BUILD_A_IMPL_BLOCK: &str = "impl __skip {}";
 pub(crate) fn base_impl() -> String {
     String::from(BUILD_A_IMPL_BLOCK)
@@ -1099,17 +1018,6 @@ pub(crate) static VOID_RETURN: &str = "fn __skip() { return; }";
 pub(crate) fn build_void_return() -> String {
     String::from(VOID_RETURN)
 }
-
-// pub(crate) static NONCE_COUNTER: [&str; 2] = ["static NONCE_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));"];
-// pub(crate) fn build_nonce_counter() -> String {
-//     String::from(NONCE_COUNTER)
-// }
-
-// TODO: why does Daikon error if main has a nonce of 1 with everything else?
-// pub(crate) static MAIN_COUNTER: &str = "static MAIN_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));";
-// pub(crate) fn build_nonc() -> String {
-//     String::from(MAIN_COUNTER)
-// }
 
 pub(crate) static DTRACE_NEWLINE: &str = "fn __skip() { dtrace_newline(); }";
 pub(crate) fn dtrace_newline() -> String {
