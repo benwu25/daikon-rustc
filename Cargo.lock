@@ -1000,6 +1000,9 @@ dependencies = [
 [[package]]
 name = "daikon-tests"
 version = "0.1.0"
+dependencies = [
+ "colored 3.0.0",
+]
 
 [[package]]
 name = "darling"

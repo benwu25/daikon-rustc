@@ -1,3 +1,5 @@
+use colored::Colorize;
+
 pub fn get_output_name(s: String) -> String {
     let end =
         match s.rfind(".") { // .rs
@@ -17,7 +19,6 @@ pub fn get_output_name(s: String) -> String {
     return res;
 }
 
-#[test]
 fn run_daikon_rustc_pp_tests() {
     // iterate through "./tests" and run rustc +daikon for files, cargo +daikon for multi-file tests in subdirectories
     let test_path = std::fs::canonicalize(std::path::Path::new("./test")).unwrap();
@@ -35,6 +36,9 @@ fn run_daikon_rustc_pp_tests() {
             if !path_str.ends_with("rs") {
                 continue;
             } else {
+                let output_name = get_output_name(String::from(path_str));
+                println!("Running test {}", output_name);
+
                 std::process::Command::new("rustc")
                     .arg("+daikon")
                     .arg(path_str)
@@ -46,16 +50,13 @@ fn run_daikon_rustc_pp_tests() {
                     .expect("failed to execute daikon-rustc");
 
                 // read expected/actual pp to String
-                let output_name = get_output_name(String::from(path_str));
                 let pp_path = format!("./test/{}{}", output_name, ".pp");
                 let pp_as_path = std::path::Path::new(&pp_path);
                 let pp_as_path_buf = std::fs::canonicalize(pp_as_path).unwrap();
-                eprintln!("{}", pp_as_path_buf.to_str().unwrap());
                 let actual = std::fs::read_to_string(&pp_as_path_buf).unwrap();
                 let pp_expected_path = format!("./test/{}-expected{}", output_name, ".pp");
                 let pp_expected_as_path = std::path::Path::new(&pp_expected_path);
                 let pp_expected_as_path_buf = std::fs::canonicalize(pp_expected_as_path).unwrap();
-                eprintln!("{}", pp_expected_as_path_buf.to_str().unwrap());
                 let expected = std::fs::read_to_string(&pp_expected_as_path_buf).unwrap();
 
                 // remove junk
@@ -70,9 +71,15 @@ fn run_daikon_rustc_pp_tests() {
 
                 // check
                 assert_eq!(expected, actual);
+                println!("{}", "Pass".green());
             }
         }
     }
+
+    println!("\n{}", "All tests passed".green());
+
 }
 
-fn main() {}
+fn main() {
+  run_daikon_rustc_pp_tests();
+}
