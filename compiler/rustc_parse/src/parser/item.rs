@@ -194,15 +194,25 @@ fn cut_lifetimes(spliced_struct: String) -> String {
     res
 }
 
-// pub(crate) struct FPUControlWord(u16);
-// pub(crate) struct FPUControlWord;
-// pub(crate) struct X { ... }
-// pub struct FPUControlWord(u16);
-// pub struct FPUControlWord;
-// pub struct X { ... }
-// struct FPUControlWord(u16);
-// struct FPUControlWord;
-// struct X { ... }
+pub fn jot_output_name(s: String) {
+    let end =
+        match s.rfind(".") { // .rs
+            None => panic!("no . at the end of input file name"),
+            Some(end) => end
+        };
+    let mut start =
+        match s.rfind("/") { // .../<crate>.rs
+            None => 0,
+            Some(slash) => slash+1
+        };
+    let mut res = String::from("");
+    while start < end {
+        res.push_str(&format!("{}", s.chars().nth(start).unwrap()));
+        start += 1;
+    }
+    *OUTPUT_NAME.lock().unwrap() = res;
+}
+
 fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
     let start_idx = pp_struct.find(" ");
     match &start_idx {
@@ -399,7 +409,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                  daikon_tmp_counter: &mut u32) -> usize {
         let mut i = loc;
         let stmt = body.stmts[i].clone();
-        println!("{}\n\n", pprust::stmt_to_string(&stmt));
+        // println!("{}\n\n", pprust::stmt_to_string(&stmt));
         match &mut body.stmts[i].kind {
             StmtKind::Let(_local) => { return i+1; }
             StmtKind::Item(_item) => { return i+1; }
@@ -564,7 +574,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         BasicType::UserDef(userdef_type) => {
                             // Finish up.
                             if userdef_type.starts_with("Option") || userdef_type.starts_with("Result") {
-                                println!("hi explicit option return");
+                                // println!("hi explicit option return");
                                 i = self.insert_into_block(i, dtrace_newline(), body);
 
                                 // let inc = build_inc(ppt_name.clone());
@@ -768,7 +778,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     BasicType::UserDef(userdef_type) => {
                         // Finish up.
                         if userdef_type.starts_with("Option") || userdef_type.starts_with("Result") {
-                            println!("hello");
+                            // println!("hello");
                             i = self.insert_into_block(i, dtrace_newline(), body);
 
                             // let inc = build_inc(ppt_name.clone());
@@ -1222,7 +1232,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             i += 1;
         }
         let res = format!("{}{}", dtrace_print_xfields_vec, dtrace_print_xfields_vec_epilogue());
-        println!("\n\ndtrace_print_xfield_vec:\n{}\n\n", res);
+        // println!("\n\ndtrace_print_xfield_vec:\n{}\n\n", res);
         res
     }
 
@@ -1330,7 +1340,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
 
         let res = format!("{}{}", dtrace_print_fields_vec, dtrace_print_fields_vec_epilogue());
-        println!("\n\ndtrace_print_fields_vec:\n{}\n\n", res);
         res
     }
 
@@ -1430,7 +1439,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut is_ref = false;
             let mut dtrace_rec =
                 if get_param_ident(&decl.inputs[i].pat) == "self" {
-                    println!("hi self!");
+                    // println!("hi self!");
                     build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
                 } else {
                     match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
@@ -1482,7 +1491,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             *daikon_tmp_counter += 1;
                             let var_name = get_param_ident(&decl.inputs[i].pat);
                             // We maintain that is_ref represents Vec/array argument in this case.
-                            println!("hullo: {}", is_ref);
                             let tmp_vec =
                                 if is_ref {
                                     build_daikon_tmp_vec(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
@@ -1496,7 +1504,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     build_pointer_vec(var_name.clone()),
                                     build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()),
                                     build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()));
-                            println!("no close:\n{}\n\n", res);
                             res
                         }
                         BasicType::PrimArray(p_type) => {
@@ -1538,7 +1545,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     build_pointer_arr(var_name.clone()),
                                     build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()),
                                     build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()));
-                            println!("no close:\n{}\n\n", res);
                             res
                         }
                         BasicType::NoRet => { String::from("") }
@@ -1667,7 +1673,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 if ppt_name == "execute" {
                     return;
                 }
-                println!("now doing: {}", ppt_name);
+                // println!("now doing: {}", ppt_name);
                 // let counter =
                 //     if ppt_name == "main" {
                 //         build_main_counter()
@@ -1894,7 +1900,7 @@ impl<'a> MutVisitor for DaikonNoopVisitor<'a> {
                 break;
             }
         };
-        println!("now is: {}", get_struct);
+        // println!("now is: {}", get_struct);
 
         match &mut item.kind {
             ItemKind::Enum(_ident, generics, _enum_def) => {
@@ -1986,6 +1992,7 @@ impl<'a> MutVisitor for DaikonNoopVisitor<'a> {
     }
 }
 
+pub static OUTPUT_NAME: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
 pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
@@ -2134,12 +2141,16 @@ impl<'a> Parser<'a> {
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
             // pretty print the instrumented code (without library/imports) for testing
-            let mut pp = std::fs::File::options().create(true).write(true).append(true).open(std::path::Path::new("/home/benwu25/Downloads/daikon-rustc/daikon-tests/tests/main.pp")).unwrap();
+            let pp_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".pp");
+            let pp_as_path = std::path::Path::new(&pp_path);
+            std::fs::File::create(&pp_as_path).unwrap();
+            let mut pp = std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
             let mut i = 0;
-            while i < items.len() {
-                writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
+            while i < items.len() - 1 {
+                writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
                 i += 1;
             }
+            writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
 
             // push daikon library and items_to_append to items.
             match &self.parse_items_from_string(daikon_lib()) {

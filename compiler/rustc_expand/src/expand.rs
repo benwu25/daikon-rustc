@@ -15,7 +15,7 @@ use rustc_ast::{
     FieldDef, Expr, 
 };
 use rustc_ast::visit::FnKind;
-use rustc_parse::parser::item::DO_VISITOR;
+use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_NAME};
 #[allow(unused_imports)]
 use rustc_parse::parser::daikon_strs::{
     I8, I16, I32, I64, I128, ISIZE,
@@ -1834,13 +1834,8 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
 
 static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::new(dtrace_open()));
 fn dtrace_open() -> Option<std::fs::File> {
-    // match std::fs::File::options().write(true).append(true).open(std::path::Path::new("/home/benwu25/Downloads/test-map-builder/main.decls")) {
-    //     Err(why) => {
-    //         panic!("Daikon couldn't open file oh no, oh no. {}", why);
-    //     }
-    //     Ok(decls) => Some(decls),
-    // }
-    let decls = std::path::Path::new("main.decls");
+    let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
+    let decls = std::path::Path::new(&decls_path);
     Some(std::fs::File::options().write(true).append(true).open(&decls).unwrap())
 }
 
@@ -1882,26 +1877,17 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             let mut map_builder = DeclsHashMapBuilder { map: &mut struct_map };
             map_builder.visit_crate(&krate);
 
-            // create or overwrite main.decls and main.dtrace
-            let decls = std::path::Path::new("main.decls");
+            // create or overwrite decls/dtrace
+            let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
+            let decls = std::path::Path::new(&decls_path);
             std::fs::File::create(&decls).unwrap();
-            match std::fs::File::create(std::path::Path::new("main.dtrace")) {
-                Err(why) => panic!("couldn't create main.dtrace, {}", why),
-                _ => {}
-            }
+            let dtrace_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".dtrace");
+            let dtrace = std::path::Path::new(&dtrace_path);
+            std::fs::File::create(&dtrace).unwrap();
             write_header();
             write_newline();
             let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace
             decls_visitor.visit_crate(&krate);
-
-            // sync doesn't help.
-            match &*DECLS.lock().unwrap() {
-                None => panic!("1681"),
-                Some(decls) => match &decls.sync_all() {
-                    Err(_) => panic!("Can't sync"),
-                    Ok(_) => {}
-                }
-            }
         }
 
 

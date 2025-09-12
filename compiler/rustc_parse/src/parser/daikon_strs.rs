@@ -1,3 +1,5 @@
+use crate::parser::item::OUTPUT_NAME;
+
 // Proper primitive types
 // i8, i16, i32, i64, i128 and isize
 // u8, u16, u32, u64, u128 and usize
@@ -832,10 +834,11 @@ pub(crate) fn build_call_print_field(field_name: String) -> String {
 }
 
 #[allow(dead_code)]
-pub(crate) static DTRACE_PRINT_XFIELDS_VEC: [&str; 5] = ["pub fn dtrace_print_",
+pub(crate) static DTRACE_PRINT_XFIELDS_VEC: [&str; 6] = ["pub fn dtrace_print_",
                                                      "_vec(v: &Vec<&",
                                                         ">, var_name: String) {
-                                                        let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+                                                        let mut traces = match File::options().append(true).open(\"",
+                                                        ".dtrace\") {
                                                             Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
                                                             Ok(traces) => traces,
                                                         };
@@ -861,8 +864,10 @@ pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String)
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[2]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[3]);
-    res.push_str(&field_name);
+    res.push_str(&*OUTPUT_NAME.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS_VEC[4]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRINT_XFIELDS_VEC[5]);
     res
 }
 
@@ -919,10 +924,11 @@ pub(crate) fn dtrace_print_xfields_vec_epilogue() -> String {
     String::from(DTRACE_PRINT_XFIELDS_VEC_EPILOGUE)
 }
 
-pub(crate) static DTRACE_PRINT_XFIELDS: [&str; 5] = ["pub fn dtrace_print_",
+pub(crate) static DTRACE_PRINT_XFIELDS: [&str; 6] = ["pub fn dtrace_print_",
                                                      "_vec(v: &Vec<&",
                                                         ">, var_name: String) {
-                                                        let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+                                                        let mut traces = match File::options().append(true).open(\"",
+                                                        ".dtrace\") {
                                                             Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
                                                             Ok(traces) => traces,
                                                         };
@@ -948,15 +954,18 @@ pub(crate) fn build_print_xfield(field_name: String, basic_type: String) -> Stri
     res.push_str(DTRACE_PRINT_XFIELDS[2]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS[3]);
-    res.push_str(&field_name);
+    res.push_str(&*OUTPUT_NAME.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS[4]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRINT_XFIELDS[5]);
     res
 }
 
-pub(crate) static DTRACE_PRINT_XFIELDS_STRING: [&str; 5] = ["pub fn dtrace_print_",
+pub(crate) static DTRACE_PRINT_XFIELDS_STRING: [&str; 6] = ["pub fn dtrace_print_",
                                                      "_vec(v: &Vec<&",
                                                         ">, var_name: String) {
-                                                        let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+                                                        let mut traces = match File::options().append(true).open(\"",
+                                                        ".dtrace\") {
                                                             Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
                                                             Ok(traces) => traces,
                                                         };
@@ -982,8 +991,10 @@ pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) 
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[2]);
     res.push_str(&field_name);
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[3]);
-    res.push_str(&field_name);
+    res.push_str(&*OUTPUT_NAME.lock().unwrap());
     res.push_str(DTRACE_PRINT_XFIELDS_STRING[4]);
+    res.push_str(&field_name);
+    res.push_str(DTRACE_PRINT_XFIELDS_STRING[5]);
     res
 }
 
@@ -1112,9 +1123,10 @@ pub(crate) fn build_imports() -> String {
     String::from(IMPORTS)
 }
 
-pub(crate) static DAIKON_LIB: &str =
-"pub fn dtrace_print_pointer_arr<T>(v: &[&T], var_name: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+pub(crate) static DAIKON_LIB: [&str; 15] =
+["pub fn dtrace_print_pointer_arr<T>(v: &[&T], var_name: String) {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1134,7 +1146,8 @@ pub(crate) static DAIKON_LIB: &str =
 }
 
 pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1155,7 +1168,8 @@ pub fn dtrace_print_pointer_vec<T>(v: &Vec<&T>, var_name: String) {
 
 // T must implement Display trait
 fn dtrace_print_prim_arr<T: std::fmt::Display>(v: &[T], prefix: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1175,7 +1189,8 @@ fn dtrace_print_prim_arr<T: std::fmt::Display>(v: &[T], prefix: String) {
 }
 
 fn dtrace_print_prim_vec<T: std::fmt::Display>(v: &Vec<T>, prefix: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1195,7 +1210,8 @@ fn dtrace_print_prim_vec<T: std::fmt::Display>(v: &Vec<T>, prefix: String) {
 }
 
 fn dtrace_print_str(v: &str, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1206,7 +1222,8 @@ fn dtrace_print_str(v: &str, var_name: String) {
 
 // T must implement Display trait
 fn dtrace_print_prim<T: std::fmt::Display>(v: T, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1216,7 +1233,8 @@ fn dtrace_print_prim<T: std::fmt::Display>(v: T, var_name: String) {
 }
 
 fn dtrace_print_string(v: String, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1226,7 +1244,8 @@ fn dtrace_print_string(v: String, var_name: String) {
 }
 
 fn dtrace_print_string_vec(v: &Vec<String>, prefix: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1246,7 +1265,8 @@ fn dtrace_print_string_vec(v: &Vec<String>, prefix: String) {
 }
 
 fn dtrace_print_pointer(v: usize, var_name: String) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1256,7 +1276,8 @@ fn dtrace_print_pointer(v: usize, var_name: String) {
 }
 
 fn dtrace_entry_no_nonce(ppt_name: &str) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1264,7 +1285,8 @@ fn dtrace_entry_no_nonce(ppt_name: &str) {
 }
 
 fn dtrace_exit_no_nonce(ppt_name: &str) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1272,7 +1294,8 @@ fn dtrace_exit_no_nonce(ppt_name: &str) {
 }
 
 fn dtrace_entry(ppt_name: &str, nonce: u32) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1282,7 +1305,8 @@ fn dtrace_entry(ppt_name: &str, nonce: u32) {
 }
 
 fn dtrace_exit(ppt_name: &str, nonce: u32) {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
@@ -1292,13 +1316,19 @@ fn dtrace_exit(ppt_name: &str, nonce: u32) {
 }
 
 fn dtrace_newline() {
-    let mut traces = match File::options().append(true).open(\"main.dtrace\") {
+    let mut traces = match File::options().append(true).open(\"",
+    ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
         Ok(traces) => traces,
     };
     writeln!(traces, \"\").ok();
-}";
+}"];
 
 pub(crate) fn daikon_lib() -> String {
-    String::from(DAIKON_LIB)
+    let mut res = String::from(DAIKON_LIB[0]);
+    for i in 1..DAIKON_LIB.len() {
+        res.push_str(&*OUTPUT_NAME.lock().unwrap());
+        res.push_str(DAIKON_LIB[i]);
+    }
+    res
 }
