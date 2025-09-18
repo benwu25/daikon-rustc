@@ -3,26 +3,22 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::{iter, mem};
 
-use std::collections::HashMap;
-use thin_vec::ThinVec;
-use std::io::Write;
-use std::sync::{LazyLock, Mutex};
+use rustc_ast::visit::FnKind;
 #[allow(unused_imports)]
 use rustc_ast::{
-    Item, VariantData, FnRetTy,
-    FnDecl, Block, Path, GenericArgs,
-    AngleBracketedArg, GenericArg, Pat,
-    FieldDef, Expr, 
+    AngleBracketedArg, Block, Expr, FieldDef, FnDecl, FnRetTy, GenericArg, GenericArgs, Item, Pat,
+    Path, VariantData,
 };
-use rustc_ast::visit::FnKind;
-use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_NAME};
 #[allow(unused_imports)]
 use rustc_parse::parser::daikon_strs::{
-    I8, I16, I32, I64, I128, ISIZE,
-    U8, U16, U32, U64, U128, USIZE,
-    F32, F64, CHAR, BOOL, UNIT, STR,
-    STRING, VEC
+    BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
+    UNIT, USIZE, VEC,
 };
+use rustc_parse::parser::item::{DO_VISITOR, OUTPUT_NAME};
+use std::collections::HashMap;
+use std::io::Write;
+use std::sync::{LazyLock, Mutex};
+use thin_vec::ThinVec;
 
 use rustc_ast::mut_visit::*;
 use rustc_ast::ptr::P;
@@ -31,7 +27,7 @@ use rustc_ast::visit::{self, AssocCtxt, Visitor, VisitorResult, try_visit, walk_
 use rustc_ast::{
     self as ast, AssocItemKind, AstNodeWrapper, AttrArgs, AttrStyle, AttrVec, DUMMY_NODE_ID,
     ExprKind, ForeignItemKind, HasAttrs, HasNodeId, Inline, ItemKind, MacStmtStyle, MetaItemInner,
-    MetaItemKind, ModKind, NodeId, PatKind, StmtKind, TyKind, token
+    MetaItemKind, ModKind, NodeId, PatKind, StmtKind, TyKind, token,
 };
 use rustc_ast_pretty::pprust;
 use rustc_attr_parsing::{EvalConfigResult, ShouldEmit};
@@ -475,19 +471,6 @@ impl Invocation {
     }
 }
 
-// #[allow(dead_code)]
-// #[derive(PartialEq)]
-// enum BasicType {
-//     Prim(String),
-//     UserDef,
-//     PrimVec(String),
-//     UserDefVec,
-//     PrimArray(String),
-//     UserDefArray,
-//     NoRet,
-//     Error,
-// }
-
 fn get_param_ident(pat: &P<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
@@ -496,12 +479,19 @@ fn get_param_ident(pat: &P<Pat>) -> String {
 }
 
 fn get_prim_rep_type(ty_str: &str) -> String {
-    if ty_str == I8 || ty_str == I16 ||
-       ty_str == I32 || ty_str == I64 ||
-       ty_str == I128 || ty_str == ISIZE ||
-       ty_str == U8 || ty_str == U16 ||
-       ty_str == U32 || ty_str == U64 ||
-       ty_str == U128 || ty_str == USIZE {
+    if ty_str == I8
+        || ty_str == I16
+        || ty_str == I32
+        || ty_str == I64
+        || ty_str == I128
+        || ty_str == ISIZE
+        || ty_str == U8
+        || ty_str == U16
+        || ty_str == U32
+        || ty_str == U64
+        || ty_str == U128
+        || ty_str == USIZE
+    {
         return String::from("int");
     } else if ty_str == F32 || ty_str == F64 {
         return String::from("");
@@ -534,11 +524,15 @@ fn grok_vec_args(path: &Path) -> RepType {
         Some(args) => match &**args {
             GenericArgs::AngleBracketed(brack_args) => match &brack_args.args[0] {
                 AngleBracketedArg::Arg(arg) => match &arg {
-                    GenericArg::Type(arg_type) => match &get_rep_type(&arg_type.kind, &mut is_ref) {
-                        RepType::Prim(arg_p_type) => RepType::PrimArray(arg_p_type.to_string()),
-                        RepType::HashCodeStruct(struct_type) => RepType::HashCodeArray(struct_type.to_string()),
-                        _ => panic!("Multi-dim vec/array not supported"),
-                    },
+                    GenericArg::Type(arg_type) => {
+                        match &get_rep_type(&arg_type.kind, &mut is_ref) {
+                            RepType::Prim(arg_p_type) => RepType::PrimArray(arg_p_type.to_string()),
+                            RepType::HashCodeStruct(struct_type) => {
+                                RepType::HashCodeArray(struct_type.to_string())
+                            }
+                            _ => panic!("Multi-dim vec/array not supported"),
+                        }
+                    }
                     _ => panic!("Grok args failed 1"),
                 },
                 _ => panic!("Grok args failed 2"),
@@ -562,13 +556,13 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
         TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref) {
             RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
             RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
-            _ => panic!("higher-dim arrays not supported")
-        }
+            _ => panic!("higher-dim arrays not supported"),
+        },
         TyKind::Slice(arr_type) => match &get_rep_type(&arr_type.kind, is_ref) {
             RepType::Prim(p_type) => RepType::PrimArray(String::from(p_type)),
             RepType::HashCodeStruct(basic_type) => RepType::HashCodeArray(String::from(basic_type)),
-            _ => panic!("higher-dim arrays not supported")
-        }
+            _ => panic!("higher-dim arrays not supported"),
+        },
         TyKind::Ptr(_) => todo!(),
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
@@ -589,7 +583,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
             }
             return RepType::HashCodeStruct(String::from(ty_string));
         }
-        _ => todo!()
+        _ => todo!(),
     }
 }
 
@@ -612,15 +606,13 @@ struct DeclsHashMapBuilder<'a> {
 impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
     fn visit_item(&mut self, item: &'a Item) {
         match &item.kind {
-            ItemKind::Struct(ident, _, variant_data) => {
-                match variant_data {
-                    VariantData::Struct { fields: _, recovered: _ } => {
-                        self.map.insert(String::from(ident.as_str()), Box::new(item.clone()));
-                    }
-                    VariantData::Tuple(_, _) => {}
-                    _ => {}
+            ItemKind::Struct(ident, _, variant_data) => match variant_data {
+                VariantData::Struct { fields: _, recovered: _ } => {
+                    self.map.insert(String::from(ident.as_str()), Box::new(item.clone()));
                 }
-            }
+                VariantData::Tuple(_, _) => {}
+                _ => {}
+            },
             _ => {}
         }
 
@@ -642,7 +634,7 @@ struct TopLevlDecl<'a> {
     pub rep_type: String,
     pub key: Option<String>, // struct name for looking up structs if this is a struct
     pub field_decls: Option<Vec<FieldDecl<'a>>>,
-    pub contents: Option<ArrayContents<'a>>
+    pub contents: Option<ArrayContents<'a>>,
 }
 
 #[allow(rustc::default_hash_types)]
@@ -714,13 +706,11 @@ impl<'a> ArrayContents<'a> {
                     }
                     Some(struct_item) => match &struct_item.kind {
                         ItemKind::Struct(_, _, variant_data) => match variant_data {
-                            VariantData::Struct { fields, recovered: _ } => {
-                                fields.clone()
-                            }
+                            VariantData::Struct { fields, recovered: _ } => fields.clone(),
                             _ => panic!("Struct is not VariantData::Struct"),
-                        }
-                        _ => panic!("struct_item is not a struct")
-                    }
+                        },
+                        _ => panic!("struct_item is not a struct"),
+                    },
                 }
             }
         }
@@ -743,87 +733,85 @@ impl<'a> ArrayContents<'a> {
         while i < fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
-                None => panic!("Field has no identifier")
+                None => panic!("Field has no identifier"),
             };
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
             let mut do_write = true;
-            let var_decl =
-                match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
-                    RepType::Prim(p_type) => {
-                        ArrayContents {
-                            map: self.map,
-                            var_name: var_name.clone(),
-                            dec_type: format!("{}[]", p_type),
-                            rep_type: format!("{}[]", p_type),
-                            enclosing_var: self.var_name.clone(),
-                            key: None,
-                            sub_contents: None,
-                        }
-                    }
-                    RepType::HashCodeStruct(ty_string) => {
-                        let mut tmp =
-                            ArrayContents {
-                                map: self.map,
-                                var_name: var_name.clone(),
-                                dec_type: format!("{}[]", ty_string),
-                                rep_type: String::from("hashcode[]"),
-                                enclosing_var: self.var_name.clone(),
-                                key: Some(ty_string.clone()),
-                                sub_contents: Some(Vec::new())
-                            };
-                        tmp.build_contents(depth_limit - 1, &mut do_write);
+            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+                RepType::Prim(p_type) => ArrayContents {
+                    map: self.map,
+                    var_name: var_name.clone(),
+                    dec_type: format!("{}[]", p_type),
+                    rep_type: format!("{}[]", p_type),
+                    enclosing_var: self.var_name.clone(),
+                    key: None,
+                    sub_contents: None,
+                },
+                RepType::HashCodeStruct(ty_string) => {
+                    let mut tmp = ArrayContents {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: format!("{}[]", ty_string),
+                        rep_type: String::from("hashcode[]"),
+                        enclosing_var: self.var_name.clone(),
+                        key: Some(ty_string.clone()),
+                        sub_contents: Some(Vec::new()),
+                    };
+                    tmp.build_contents(depth_limit - 1, &mut do_write);
 
-                        // Error checking
-                        if !do_write {
-                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                            match &mut tmp.sub_contents {
-                                None => panic!("Expected some field_decls 1"),
-                                Some(sub_contents) => {
-                                    let mut j = 0;
-                                    while j < sub_contents.len() {
-                                        sub_contents[j].var_name = String::from("false");
-                                        j += 1;
-                                    }
+                    // Error checking
+                    if !do_write {
+                        // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                        match &mut tmp.sub_contents {
+                            None => panic!("Expected some field_decls 1"),
+                            Some(sub_contents) => {
+                                let mut j = 0;
+                                while j < sub_contents.len() {
+                                    sub_contents[j].var_name = String::from("false");
+                                    j += 1;
                                 }
                             }
                         }
-                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                            // this record is also invalid
-                            tmp.var_name = String::from("false");
-                        }
-                        tmp
                     }
-                    RepType::PrimArray(_) => { // only print pointers
-                        ArrayContents {
-                            map: self.map,
-                            var_name: var_name.clone(),
-                            dec_type: String::from("<higher-dim-array>"),
-                            rep_type: String::from("hashcode[]"),
-                            enclosing_var: self.var_name.clone(),
-                            key: None, // we shouldn't be using this in write.
-                            sub_contents: None
-                        }
+                    if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                        // this record is also invalid
+                        tmp.var_name = String::from("false");
                     }
-                    RepType::HashCodeArray(_) => { // only print pointers
-                        ArrayContents {
-                            map: self.map,
-                            var_name: var_name.clone(),
-                            dec_type: String::from("<higher-dim-array>"),
-                            rep_type: String::from("hashcode[]"),
-                            enclosing_var: self.var_name.clone(),
-                            key: None,
-                            sub_contents: None
-                        }
+                    tmp
+                }
+                RepType::PrimArray(_) => {
+                    // only print pointers
+                    ArrayContents {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: String::from("<higher-dim-array>"),
+                        rep_type: String::from("hashcode[]"),
+                        enclosing_var: self.var_name.clone(),
+                        key: None, // we shouldn't be using this in write.
+                        sub_contents: None,
                     }
-                };
+                }
+                RepType::HashCodeArray(_) => {
+                    // only print pointers
+                    ArrayContents {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: String::from("<higher-dim-array>"),
+                        rep_type: String::from("hashcode[]"),
+                        enclosing_var: self.var_name.clone(),
+                        key: None,
+                        sub_contents: None,
+                    }
+                }
+            };
             match &mut self.sub_contents {
                 None => panic!("No sub_contents in build_contents"),
                 Some(sub_contents) => {
                     sub_contents.push(var_decl);
                 }
             }
-            
+
             i += 1;
         }
     }
@@ -879,13 +867,11 @@ impl<'a> FieldDecl<'a> {
                     }
                     Some(struct_item) => match &struct_item.kind {
                         ItemKind::Struct(_, _, variant_data) => match variant_data {
-                            VariantData::Struct { fields, recovered: _ } => {
-                                fields.clone()
-                            }
+                            VariantData::Struct { fields, recovered: _ } => fields.clone(),
                             _ => panic!("Struct is not VariantData::Struct"),
-                        }
-                        _ => panic!("struct_item is not a struct")
-                    }
+                        },
+                        _ => panic!("struct_item is not a struct"),
+                    },
                 }
             }
         }
@@ -907,137 +893,134 @@ impl<'a> FieldDecl<'a> {
         while i < fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
-                None => panic!("Field has no identifier")
+                None => panic!("Field has no identifier"),
             };
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
             let mut do_write = true;
-            let var_decl =
-                match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
-                    RepType::Prim(p_type) => {
-                        FieldDecl {
-                            map: self.map,
-                            var_name: var_name.clone(),
-                            dec_type: p_type.clone(),
-                            rep_type: p_type.clone(),
-                            enclosing_var: self.var_name.clone(),
-                            field_name: field_name.clone(),
-                            key: None,
-                            field_decls: None,
-                            contents: None,
-                        } // Ready to write.
-                    }
-                    RepType::HashCodeStruct(ty_string) => {
-                        let mut tmp =
-                            FieldDecl {
-                                map: self.map,
-                                var_name: var_name.clone(),
-                                dec_type: ty_string.clone(),
-                                rep_type: String::from("hashcode"),
-                                enclosing_var: self.var_name.clone(),
-                                field_name: field_name.clone(),
-                                key: Some(ty_string.clone()),
-                                field_decls: Some(Vec::new()),
-                                contents: None,
-                            };
-                        tmp.build_fields(depth_limit - 1, &mut do_write);
+            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+                RepType::Prim(p_type) => {
+                    FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: p_type.clone(),
+                        rep_type: p_type.clone(),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: None,
+                        field_decls: None,
+                        contents: None,
+                    } // Ready to write.
+                }
+                RepType::HashCodeStruct(ty_string) => {
+                    let mut tmp = FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: ty_string.clone(),
+                        rep_type: String::from("hashcode"),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: Some(ty_string.clone()),
+                        field_decls: Some(Vec::new()),
+                        contents: None,
+                    };
+                    tmp.build_fields(depth_limit - 1, &mut do_write);
 
-                        // Error checking
-                        if !do_write {
-                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                            match &mut tmp.field_decls {
-                                None => panic!("Expected some field_decls 1"),
-                                Some(field_decls) => {
-                                    let mut j = 0;
-                                    while j < field_decls.len() {
-                                        field_decls[j].var_name = String::from("false");
-                                        j += 1;
-                                    }
+                    // Error checking
+                    if !do_write {
+                        // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                        match &mut tmp.field_decls {
+                            None => panic!("Expected some field_decls 1"),
+                            Some(field_decls) => {
+                                let mut j = 0;
+                                while j < field_decls.len() {
+                                    field_decls[j].var_name = String::from("false");
+                                    j += 1;
                                 }
                             }
                         }
-                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                            // this record is also invalid
-                            tmp.var_name = String::from("false");
-                        }
-                        tmp
                     }
-                    RepType::PrimArray(p_type) => {
-                        FieldDecl {
+                    if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                        // this record is also invalid
+                        tmp.var_name = String::from("false");
+                    }
+                    tmp
+                }
+                RepType::PrimArray(p_type) => {
+                    FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: format!("{}[]", p_type),
+                        rep_type: String::from("hashcode"),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: None,
+                        field_decls: None,
+                        contents: Some(ArrayContents {
                             map: self.map,
-                            var_name: var_name.clone(),
+                            var_name: format!("{}[..]", var_name),
                             dec_type: format!("{}[]", p_type),
-                            rep_type: String::from("hashcode"),
-                            enclosing_var: self.var_name.clone(),
-                            field_name: field_name.clone(),
+                            rep_type: format!("{}[]", p_type),
+                            enclosing_var: var_name.clone(),
                             key: None,
-                            field_decls: None,
-                            contents: Some(ArrayContents {
-                                map: self.map,
-                                var_name: format!("{}[..]", var_name),
-                                dec_type: format!("{}[]", p_type),
-                                rep_type: format!("{}[]", p_type),
-                                enclosing_var: var_name.clone(),
-                                key: None,
-                                sub_contents: None,
-                            }) // Ready to write.
-                        }
+                            sub_contents: None,
+                        }), // Ready to write.
                     }
-                    RepType::HashCodeArray(ty_string) => {
-                        let mut tmp =
-                            FieldDecl {
-                                map: self.map,
-                                var_name: var_name.clone(),
-                                dec_type: format!("{}[]", ty_string),
-                                rep_type: String::from("hashcode"),
-                                enclosing_var: self.var_name.clone(),
-                                field_name: field_name.clone(),
-                                key: Some(ty_string.clone()),
-                                field_decls: None,
-                                contents: Some(ArrayContents {
-                                    map: self.map,
-                                    var_name: format!("{}[..]", var_name),
-                                    dec_type: format!("{}[]", ty_string),
-                                    rep_type: String::from("hashcode[]"),
-                                    enclosing_var: var_name.clone(),
-                                    key: Some(ty_string.clone()),
-                                    sub_contents: Some(Vec::new()),
-                                })
-                            };
-                        match &mut tmp.contents {
-                            None => panic!(""),
-                            Some(contents) => {
-                                contents.build_contents(depth_limit - 1, &mut do_write);
+                }
+                RepType::HashCodeArray(ty_string) => {
+                    let mut tmp = FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: format!("{}[]", ty_string),
+                        rep_type: String::from("hashcode"),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: Some(ty_string.clone()),
+                        field_decls: None,
+                        contents: Some(ArrayContents {
+                            map: self.map,
+                            var_name: format!("{}[..]", var_name),
+                            dec_type: format!("{}[]", ty_string),
+                            rep_type: String::from("hashcode[]"),
+                            enclosing_var: var_name.clone(),
+                            key: Some(ty_string.clone()),
+                            sub_contents: Some(Vec::new()),
+                        }),
+                    };
+                    match &mut tmp.contents {
+                        None => panic!(""),
+                        Some(contents) => {
+                            contents.build_contents(depth_limit - 1, &mut do_write);
 
-                                // Error checking
-                                if !do_write {
-                                    // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                                    match &mut contents.sub_contents {
-                                        None => panic!("Expected some field_decls 1"),
-                                        Some(sub_contents) => {
-                                            let mut j = 0;
-                                            while j < sub_contents.len() {
-                                                sub_contents[j].var_name = String::from("false");
-                                                j += 1;
-                                            }
+                            // Error checking
+                            if !do_write {
+                                // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                                match &mut contents.sub_contents {
+                                    None => panic!("Expected some field_decls 1"),
+                                    Some(sub_contents) => {
+                                        let mut j = 0;
+                                        while j < sub_contents.len() {
+                                            sub_contents[j].var_name = String::from("false");
+                                            j += 1;
                                         }
                                     }
                                 }
-                                if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                                    // this record is also invalid
-                                    tmp.var_name = String::from("false");
-                                }
+                            }
+                            if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                                // this record is also invalid
+                                tmp.var_name = String::from("false");
                             }
                         }
-                        tmp
                     }
-                };
-                match &mut self.field_decls {
-                    None => panic!("No field_decls in build_fields"),
-                    Some(field_decls) => {
-                        field_decls.push(var_decl);
-                    }
+                    tmp
                 }
+            };
+            match &mut self.field_decls {
+                None => panic!("No field_decls in build_fields"),
+                Some(field_decls) => {
+                    field_decls.push(var_decl);
+                }
+            }
 
             i += 1;
         }
@@ -1096,138 +1079,135 @@ impl<'a> TopLevlDecl<'a> {
         while i < fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
-                None => panic!("Field has no identifier")
+                None => panic!("Field has no identifier"),
             };
             let var_name = format!("{}.{}", self.var_name, field_name);
             let mut is_ref = false;
             let mut do_write = true;
-            let var_decl =
-                match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
-                    RepType::Prim(p_type) => {
-                        FieldDecl {
-                            map: self.map,
-                            var_name: var_name.clone(),
-                            dec_type: p_type.clone(),
-                            rep_type: p_type.clone(),
-                            enclosing_var: self.var_name.clone(),
-                            field_name: field_name.clone(),
-                            key: None,
-                            field_decls: None,
-                            contents: None,
-                        } // Ready to write.
-                    }
-                    RepType::HashCodeStruct(ty_string) => {
-                        let mut tmp =
-                            FieldDecl {
-                                map: self.map,
-                                var_name: var_name.clone(),
-                                dec_type: ty_string.clone(),
-                                rep_type: String::from("hashcode"),
-                                enclosing_var: self.var_name.clone(),
-                                field_name: field_name.clone(),
-                                key: Some(ty_string.clone()),
-                                field_decls: Some(Vec::new()),
-                                contents: None,
-                            };
-                        tmp.build_fields(depth_limit - 1, &mut do_write);
+            let var_decl = match &get_rep_type(&fields[i].ty.kind, &mut is_ref) {
+                RepType::Prim(p_type) => {
+                    FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: p_type.clone(),
+                        rep_type: p_type.clone(),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: None,
+                        field_decls: None,
+                        contents: None,
+                    } // Ready to write.
+                }
+                RepType::HashCodeStruct(ty_string) => {
+                    let mut tmp = FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: ty_string.clone(),
+                        rep_type: String::from("hashcode"),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: Some(ty_string.clone()),
+                        field_decls: Some(Vec::new()),
+                        contents: None,
+                    };
+                    tmp.build_fields(depth_limit - 1, &mut do_write);
 
-                        // Error checking
-                        if !do_write {
-                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                            match &mut tmp.field_decls {
-                                None => panic!("Expected some field_decls 1"),
-                                Some(field_decls) => {
-                                    let mut j = 0;
-                                    while j < field_decls.len() {
-                                        field_decls[j].var_name = String::from("false");
-                                        j += 1;
-                                    }
+                    // Error checking
+                    if !do_write {
+                        // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                        match &mut tmp.field_decls {
+                            None => panic!("Expected some field_decls 1"),
+                            Some(field_decls) => {
+                                let mut j = 0;
+                                while j < field_decls.len() {
+                                    field_decls[j].var_name = String::from("false");
+                                    j += 1;
                                 }
                             }
                         }
-                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                            // this record is also invalid
-                            tmp.var_name = String::from("false");
-                        }
-                        tmp
                     }
-                    RepType::PrimArray(p_type) => {
-                        FieldDecl {
+                    if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                        // this record is also invalid
+                        tmp.var_name = String::from("false");
+                    }
+                    tmp
+                }
+                RepType::PrimArray(p_type) => {
+                    FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: format!("{}[]", p_type),
+                        rep_type: String::from("hashcode"),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: None,
+                        field_decls: None,
+                        contents: Some(ArrayContents {
                             map: self.map,
-                            var_name: var_name.clone(),
+                            var_name: format!("{}[..]", var_name),
                             dec_type: format!("{}[]", p_type),
-                            rep_type: String::from("hashcode"),
-                            enclosing_var: self.var_name.clone(),
-                            field_name: field_name.clone(),
+                            rep_type: format!("{}[]", p_type),
+                            enclosing_var: var_name.clone(),
                             key: None,
-                            field_decls: None,
-                            contents: Some(ArrayContents {
-                                map: self.map,
-                                var_name: format!("{}[..]", var_name),
-                                dec_type: format!("{}[]", p_type),
-                                rep_type: format!("{}[]", p_type),
-                                enclosing_var: var_name.clone(),
-                                key: None,
-                                sub_contents: None,
-                            }) // Ready to write.
-                        }
+                            sub_contents: None,
+                        }), // Ready to write.
                     }
-                    RepType::HashCodeArray(ty_string) => {
-                        let mut tmp =
-                            FieldDecl {
-                                map: self.map,
-                                var_name: var_name.clone(),
-                                dec_type: format!("{}[]", ty_string),
-                                rep_type: String::from("hashcode"),
-                                enclosing_var: self.var_name.clone(),
-                                field_name: field_name.clone(),
-                                key: Some(ty_string.clone()),
-                                field_decls: None,
-                                contents: Some(ArrayContents {
-                                    map: self.map,
-                                    var_name: format!("{}[..]", var_name),
-                                    dec_type: format!("{}[]", ty_string),
-                                    rep_type: String::from("hashcode[]"),
-                                    enclosing_var: var_name.clone(),
-                                    key: Some(ty_string.clone()),
-                                    sub_contents: Some(Vec::new()),
-                                })
-                            };
-                        match &mut tmp.contents {
-                            None => panic!(""),
-                            Some(contents) => {
-                                contents.build_contents(depth_limit - 1, &mut do_write);
+                }
+                RepType::HashCodeArray(ty_string) => {
+                    let mut tmp = FieldDecl {
+                        map: self.map,
+                        var_name: var_name.clone(),
+                        dec_type: format!("{}[]", ty_string),
+                        rep_type: String::from("hashcode"),
+                        enclosing_var: self.var_name.clone(),
+                        field_name: field_name.clone(),
+                        key: Some(ty_string.clone()),
+                        field_decls: None,
+                        contents: Some(ArrayContents {
+                            map: self.map,
+                            var_name: format!("{}[..]", var_name),
+                            dec_type: format!("{}[]", ty_string),
+                            rep_type: String::from("hashcode[]"),
+                            enclosing_var: var_name.clone(),
+                            key: Some(ty_string.clone()),
+                            sub_contents: Some(Vec::new()),
+                        }),
+                    };
+                    match &mut tmp.contents {
+                        None => panic!(""),
+                        Some(contents) => {
+                            contents.build_contents(depth_limit - 1, &mut do_write);
 
-                                // Error checking
-                                if !do_write {
-                                    // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
-                                    match &mut contents.sub_contents {
-                                        None => panic!("Expected some field_decls 1"),
-                                        Some(sub_contents) => {
-                                            let mut j = 0;
-                                            while j < sub_contents.len() {
-                                                sub_contents[j].var_name = String::from("false");
-                                                j += 1;
-                                            }
+                            // Error checking
+                            if !do_write {
+                                // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
+                                match &mut contents.sub_contents {
+                                    None => panic!("Expected some field_decls 1"),
+                                    Some(sub_contents) => {
+                                        let mut j = 0;
+                                        while j < sub_contents.len() {
+                                            sub_contents[j].var_name = String::from("false");
+                                            j += 1;
                                         }
                                     }
                                 }
+                            }
 
-                                if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                                    // this record is also invalid
-                                    tmp.var_name = String::from("false");
-                                }
+                            if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                                // this record is also invalid
+                                tmp.var_name = String::from("false");
                             }
                         }
-                        tmp
                     }
-                };
-                match &mut self.field_decls {
-                    None => panic!("No field_decls in build_fields"),
-                    Some(field_decls) => {
-                        field_decls.push(var_decl);
-                    }
+                    tmp
                 }
+            };
+            match &mut self.field_decls {
+                None => panic!("No field_decls in build_fields"),
+                Some(field_decls) => {
+                    field_decls.push(var_decl);
+                }
+            }
 
             i += 1;
         }
@@ -1246,13 +1226,11 @@ impl<'a> TopLevlDecl<'a> {
                     }
                     Some(struct_item) => match &struct_item.kind {
                         ItemKind::Struct(_, _, variant_data) => match variant_data {
-                            VariantData::Struct { fields, recovered: _ } => {
-                                fields.clone()
-                            }
+                            VariantData::Struct { fields, recovered: _ } => fields.clone(),
                             _ => panic!("Struct is not VariantData::Struct"),
-                        }
-                        _ => panic!("struct_item is not a struct")
-                    }
+                        },
+                        _ => panic!("struct_item is not a struct"),
+                    },
                 }
             }
         }
@@ -1301,132 +1279,165 @@ fn write_header() {
 
 impl<'a> DaikonDeclsVisitor<'a> {
     #[allow(rustc::default_hash_types)]
-    fn grok_expr_for_if(&mut self,
-                        expr: &P<Expr>,
-                        exit_counter: &mut usize,
-                        ppt_name: String,
-                        param_decls: &mut Vec<TopLevlDecl<'_>>,
-                        param_to_block_idx: &HashMap<String, i32>,
-                        ret_ty: &FnRetTy) {
+    fn grok_expr_for_if(
+        &mut self,
+        expr: &P<Expr>,
+        exit_counter: &mut usize,
+        ppt_name: String,
+        param_decls: &mut Vec<TopLevlDecl<'_>>,
+        param_to_block_idx: &HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+    ) {
         match &expr.kind {
             ExprKind::Block(block, _) => {
-                self.grok_block(ppt_name.clone(),
-                                block,
-                                param_decls,
-                                &param_to_block_idx,
-                                &ret_ty,
-                                exit_counter);
+                self.grok_block(
+                    ppt_name.clone(),
+                    block,
+                    param_decls,
+                    &param_to_block_idx,
+                    &ret_ty,
+                    exit_counter,
+                );
             }
             ExprKind::If(_, if_block, None) => {
-                self.grok_block(ppt_name.clone(),
-                                if_block,
-                                param_decls,
-                                &param_to_block_idx,
-                                &ret_ty,
-                                exit_counter);
+                self.grok_block(
+                    ppt_name.clone(),
+                    if_block,
+                    param_decls,
+                    &param_to_block_idx,
+                    &ret_ty,
+                    exit_counter,
+                );
             }
             ExprKind::If(_, if_block, Some(another_expr)) => {
-                self.grok_block(ppt_name.clone(),
-                                if_block,
-                                param_decls,
-                                &param_to_block_idx,
-                                &ret_ty,
-                                exit_counter);
-                self.grok_expr_for_if(another_expr,
-                                      exit_counter,
-                                      ppt_name.clone(),
-                                      param_decls,
-                                      &param_to_block_idx,
-                                      &ret_ty);
+                self.grok_block(
+                    ppt_name.clone(),
+                    if_block,
+                    param_decls,
+                    &param_to_block_idx,
+                    &ret_ty,
+                    exit_counter,
+                );
+                self.grok_expr_for_if(
+                    another_expr,
+                    exit_counter,
+                    ppt_name.clone(),
+                    param_decls,
+                    &param_to_block_idx,
+                    &ret_ty,
+                );
             }
-            _ => panic!("Internal error handling if stmt with else!")
+            _ => panic!("Internal error handling if stmt with else!"),
         }
     }
 
     // grok body.stmts[i]
     #[allow(rustc::default_hash_types)]
-    fn grok_stmt(&mut self,
-                 loc: usize,
-                 body: &P<Block>,
-                 exit_counter: &mut usize,
-                 ppt_name: String,
-                 param_decls: &mut Vec<TopLevlDecl<'_>>,
-                 param_to_block_idx: &HashMap<String, i32>,
-                 ret_ty: &FnRetTy) -> usize {
+    fn grok_stmt(
+        &mut self,
+        loc: usize,
+        body: &P<Block>,
+        exit_counter: &mut usize,
+        ppt_name: String,
+        param_decls: &mut Vec<TopLevlDecl<'_>>,
+        param_to_block_idx: &HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+    ) -> usize {
         let mut i = loc;
         let stmt = body.stmts[i].clone();
         // println!("{}\n\n", pprust::stmt_to_string(&stmt));
-        match &body.stmts[i].kind { // TODO: you can probably merge these now since no &mut.
-            StmtKind::Let(_local) => { return i+1; }
-            StmtKind::Item(_item) => { return i+1; }
+        match &body.stmts[i].kind {
+            // TODO: you can probably merge these now since no &mut.
+            StmtKind::Let(_local) => {
+                return i + 1;
+            }
+            StmtKind::Item(_item) => {
+                return i + 1;
+            }
             StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
                 // Blocks.
                 // recurse on nested block,
                 // but we still only grokked one (block) stmt, so just
                 // move to the next stmt (return i+1)
                 ExprKind::Block(block, _) => {
-                    self.grok_block(ppt_name.clone(),
-                                    block,
-                                    param_decls,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        block,
+                        param_decls,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                    );
+                    return i + 1;
                 }
-                ExprKind::If(_, if_block, None) => { // no else
-                    self.grok_block(ppt_name.clone(),
-                                    if_block,
-                                    param_decls,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter);
-                    return i+1;
+                ExprKind::If(_, if_block, None) => {
+                    // no else
+                    self.grok_block(
+                        ppt_name.clone(),
+                        if_block,
+                        param_decls,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                    );
+                    return i + 1;
                 }
-                ExprKind::If(_, if_block, Some(expr)) => { // yes else
-                    self.grok_block(ppt_name.clone(),
-                                    if_block,
-                                    param_decls,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter);
+                ExprKind::If(_, if_block, Some(expr)) => {
+                    // yes else
+                    self.grok_block(
+                        ppt_name.clone(),
+                        if_block,
+                        param_decls,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                    );
 
-                    self.grok_expr_for_if(expr,
-                                          exit_counter,
-                                          ppt_name.clone(),
-                                          param_decls,
-                                          &param_to_block_idx,
-                                          &ret_ty);
-                    return i+1;
+                    self.grok_expr_for_if(
+                        expr,
+                        exit_counter,
+                        ppt_name.clone(),
+                        param_decls,
+                        &param_to_block_idx,
+                        &ret_ty,
+                    );
+                    return i + 1;
                 }
                 ExprKind::While(_, while_block, _) => {
-                    self.grok_block(ppt_name.clone(),
-                                    while_block,
-                                    param_decls,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        while_block,
+                        param_decls,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                    );
+                    return i + 1;
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
-                    self.grok_block(ppt_name.clone(),
-                                    for_block,
-                                    param_decls,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        for_block,
+                        param_decls,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                    );
+                    return i + 1;
                 }
                 ExprKind::Loop(loop_block, _, _) => {
-                    self.grok_block(ppt_name.clone(),
-                                    loop_block,
-                                    param_decls,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        loop_block,
+                        param_decls,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                    );
+                    return i + 1;
                 } // missing Match blocks, TryBlock, Const block? probably more
                 _ => {}
-            }
+            },
             _ => {}
         }
         match &stmt.kind {
@@ -1461,121 +1472,126 @@ impl<'a> DaikonDeclsVisitor<'a> {
                             let var_name = String::from("return");
                             let mut is_ref = false;
                             let mut do_write = true;
-                            let mut return_decl =
-                                match &get_rep_type(&ty.kind, &mut is_ref) {
-                                    RepType::Prim(p_type) => {
-                                        TopLevlDecl {
-                                            map: self.map,
-                                            var_name: var_name.clone(),
-                                            dec_type: p_type.clone(),
-                                            rep_type: p_type.clone(),
-                                            key: None,
-                                            field_decls: None,
-                                            contents: None,
-                                        } // Ready to write this var decl.
-                                    }
-                                    RepType::HashCodeStruct(ty_string) => {
-                                        // do_write = !ty_string.starts_with("Option") && !ty_string.starts_with("Result");
-                                        // println!("do_write is {} for {}", do_write, ty_string);
-                                        let mut tmp =
-                                            TopLevlDecl {
-                                                map: self.map,
-                                                var_name: var_name.clone(),
-                                                dec_type: ty_string.clone(),
-                                                rep_type: String::from("hashcode"),
-                                                key: Some(ty_string.clone()),
-                                                field_decls: Some(Vec::new()),
-                                                contents: None,
-                                            };
-                                        tmp.build_fields(self.depth_limit, &mut do_write);
+                            let mut return_decl = match &get_rep_type(&ty.kind, &mut is_ref) {
+                                RepType::Prim(p_type) => {
+                                    TopLevlDecl {
+                                        map: self.map,
+                                        var_name: var_name.clone(),
+                                        dec_type: p_type.clone(),
+                                        rep_type: p_type.clone(),
+                                        key: None,
+                                        field_decls: None,
+                                        contents: None,
+                                    } // Ready to write this var decl.
+                                }
+                                RepType::HashCodeStruct(ty_string) => {
+                                    // do_write = !ty_string.starts_with("Option") && !ty_string.starts_with("Result");
+                                    // println!("do_write is {} for {}", do_write, ty_string);
+                                    let mut tmp = TopLevlDecl {
+                                        map: self.map,
+                                        var_name: var_name.clone(),
+                                        dec_type: ty_string.clone(),
+                                        rep_type: String::from("hashcode"),
+                                        key: Some(ty_string.clone()),
+                                        field_decls: Some(Vec::new()),
+                                        contents: None,
+                                    };
+                                    tmp.build_fields(self.depth_limit, &mut do_write);
 
-                                        // Error checking
-                                        if !do_write {
-                                            // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                                            match &mut tmp.field_decls {
-                                                None => panic!("Expected some field_decls 1"),
-                                                Some(field_decls) => {
-                                                    let mut j = 0;
-                                                    while j < field_decls.len() {
-                                                        field_decls[j].var_name = String::from("false");
-                                                        j += 1;
-                                                    }
+                                    // Error checking
+                                    if !do_write {
+                                        // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                                        match &mut tmp.field_decls {
+                                            None => panic!("Expected some field_decls 1"),
+                                            Some(field_decls) => {
+                                                let mut j = 0;
+                                                while j < field_decls.len() {
+                                                    field_decls[j].var_name = String::from("false");
+                                                    j += 1;
                                                 }
                                             }
                                         }
-                                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                                            // this record is also invalid
-                                            tmp.var_name = String::from("false");
-                                        }
-                                        tmp
                                     }
-                                    RepType::PrimArray(p_type) => {
-                                        TopLevlDecl {
+                                    if ty_string.starts_with("Option")
+                                        || ty_string.starts_with("Result")
+                                    {
+                                        // this record is also invalid
+                                        tmp.var_name = String::from("false");
+                                    }
+                                    tmp
+                                }
+                                RepType::PrimArray(p_type) => {
+                                    TopLevlDecl {
+                                        map: self.map,
+                                        var_name: var_name.clone(),
+                                        dec_type: format!("{}[]", p_type),
+                                        rep_type: String::from("hashcode"),
+                                        key: None,
+                                        field_decls: None,
+                                        contents: Some(ArrayContents {
                                             map: self.map,
-                                            var_name: var_name.clone(),
+                                            var_name: format!("{}[..]", var_name),
                                             dec_type: format!("{}[]", p_type),
-                                            rep_type: String::from("hashcode"),
+                                            rep_type: format!("{}[]", p_type),
+                                            enclosing_var: var_name.clone(),
                                             key: None,
-                                            field_decls: None,
-                                            contents: Some(ArrayContents {
-                                                map: self.map,
-                                                var_name: format!("{}[..]", var_name),
-                                                dec_type: format!("{}[]", p_type),
-                                                rep_type: format!("{}[]", p_type),
-                                                enclosing_var: var_name.clone(),
-                                                key: None,
-                                                sub_contents: None,
-                                            }) // Ready to write this var_decl.
-                                        }
+                                            sub_contents: None,
+                                        }), // Ready to write this var_decl.
                                     }
-                                    RepType::HashCodeArray(ty_string) => {
-                                        let mut tmp =
-                                            TopLevlDecl {
-                                                map: self.map,
-                                                var_name: var_name.clone(),
-                                                dec_type: format!("{}[]", ty_string),
-                                                rep_type: String::from("hashcode"),
-                                                key: Some(ty_string.clone()),
-                                                field_decls: None,
-                                                contents: Some(ArrayContents {
-                                                    map: self.map,
-                                                    var_name: format!("{}[..]", var_name),
-                                                    dec_type: format!("{}[]", ty_string),
-                                                    rep_type: String::from("hashcode[]"),
-                                                    enclosing_var: var_name.clone(),
-                                                    key: Some(ty_string.clone()),
-                                                    sub_contents: Some(Vec::new())
-                                                })
-                                            };
-                                        match &mut tmp.contents {
-                                            None => panic!(""),
-                                            Some(contents) => {
-                                                contents.build_contents(self.depth_limit - 1, &mut do_write);
+                                }
+                                RepType::HashCodeArray(ty_string) => {
+                                    let mut tmp = TopLevlDecl {
+                                        map: self.map,
+                                        var_name: var_name.clone(),
+                                        dec_type: format!("{}[]", ty_string),
+                                        rep_type: String::from("hashcode"),
+                                        key: Some(ty_string.clone()),
+                                        field_decls: None,
+                                        contents: Some(ArrayContents {
+                                            map: self.map,
+                                            var_name: format!("{}[..]", var_name),
+                                            dec_type: format!("{}[]", ty_string),
+                                            rep_type: String::from("hashcode[]"),
+                                            enclosing_var: var_name.clone(),
+                                            key: Some(ty_string.clone()),
+                                            sub_contents: Some(Vec::new()),
+                                        }),
+                                    };
+                                    match &mut tmp.contents {
+                                        None => panic!(""),
+                                        Some(contents) => {
+                                            contents.build_contents(
+                                                self.depth_limit - 1,
+                                                &mut do_write,
+                                            );
 
-                                                // Error checking
-                                                if !do_write {
-                                                    // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
-                                                    match &mut contents.sub_contents {
-                                                        None => panic!("Expected some field_decls 1"),
-                                                        Some(sub_contents) => {
-                                                            let mut j = 0;
-                                                            while j < sub_contents.len() {
-                                                                sub_contents[j].var_name = String::from("false");
-                                                                j += 1;
-                                                            }
+                                            // Error checking
+                                            if !do_write {
+                                                // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
+                                                match &mut contents.sub_contents {
+                                                    None => panic!("Expected some field_decls 1"),
+                                                    Some(sub_contents) => {
+                                                        let mut j = 0;
+                                                        while j < sub_contents.len() {
+                                                            sub_contents[j].var_name =
+                                                                String::from("false");
+                                                            j += 1;
                                                         }
                                                     }
                                                 }
+                                            }
 
-                                                if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                                                    // this record is also invalid
-                                                    tmp.var_name = String::from("false");
-                                                }
+                                            if ty_string.starts_with("Option")
+                                                || ty_string.starts_with("Result")
+                                            {
+                                                // this record is also invalid
+                                                tmp.var_name = String::from("false");
                                             }
                                         }
-                                        tmp
                                     }
-                                };
+                                    tmp
+                                }
+                            };
                             return_decl.write();
                         }
                     }
@@ -1583,39 +1599,51 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     write_newline();
                     // probably:
                     i += 1;
-
                 }
-                ExprKind::Call(_call, _params) => { return i+1; } // Maybe check for drop and other invalidations
-                _ => { return i+1; } // other things you overlooked
-            }
+                ExprKind::Call(_call, _params) => {
+                    return i + 1;
+                } // Maybe check for drop and other invalidations
+                _ => {
+                    return i + 1;
+                } // other things you overlooked
+            },
             StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
-                ExprKind::Match(..) => { return i+1; }
-                _ => panic!("is this non-semi expr a return or a valid non-semi expr?")
+                ExprKind::Match(..) => {
+                    return i + 1;
+                }
+                _ => panic!("is this non-semi expr a return or a valid non-semi expr?"),
+            },
+            _ => {
+                return i + 1;
             }
-            _ => { return i+1; }
         }
         i
     }
 
     #[allow(rustc::default_hash_types)]
-    fn grok_block(&mut self,
-                  ppt_name: String,
-                  body: &P<Block>,
-                  param_decls: &mut Vec<TopLevlDecl<'_>>,
-                  param_to_block_idx: &HashMap<String, i32>,
-                  ret_ty: &FnRetTy,
-                  exit_counter: &mut usize) {
+    fn grok_block(
+        &mut self,
+        ppt_name: String,
+        body: &P<Block>,
+        param_decls: &mut Vec<TopLevlDecl<'_>>,
+        param_to_block_idx: &HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+        exit_counter: &mut usize,
+    ) {
         let mut i = 0;
 
         // assuming no unreachable statements.
-        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
-            i = self.grok_stmt(i,
-                               body,
-                               exit_counter,
-                               ppt_name.clone(),
-                               param_decls,
-                               &param_to_block_idx,
-                               &ret_ty); // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
+        while i < body.stmts.len() {
+            // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(
+                i,
+                body,
+                exit_counter,
+                ppt_name.clone(),
+                param_decls,
+                &param_to_block_idx,
+                &ret_ty,
+            ); // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
         }
     }
 
@@ -1630,12 +1658,15 @@ impl<'a> DaikonDeclsVisitor<'a> {
     // this code being messed up is independent from the dtrace_param_blocks being messed up.
     // Make sure you know what's broken
     #[allow(rustc::default_hash_types)]
-    fn grok_fn_body(&mut self,
-                    ppt_name: String,
-                    body: &P<Block>,
-                    param_decls: &mut Vec<TopLevlDecl<'_>>,
-                    param_to_block_idx: HashMap<String, i32>,
-                    ret_ty: &FnRetTy) { // arg_dtraces: String,
+    fn grok_fn_body(
+        &mut self,
+        ppt_name: String,
+        body: &P<Block>,
+        param_decls: &mut Vec<TopLevlDecl<'_>>,
+        param_to_block_idx: HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+    ) {
+        // arg_dtraces: String,
         //let original_len = body.stmts.len();
         // let entry = build_entry(ppt_name.clone());
         // i = self.insert_into_block(i, entry, body);
@@ -1653,142 +1684,144 @@ impl<'a> DaikonDeclsVisitor<'a> {
 
         // assuming no unreachable statements.
         let mut i = 0;
-        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
-            i = self.grok_stmt(i,
-                               body,
-                               &mut exit_counter,
-                               ppt_name.clone(),
-                               param_decls,
-                               &param_to_block_idx,
-                               &ret_ty); // match on Semi mainly for now, find return <expr>; and add an exit point.
+        while i < body.stmts.len() {
+            // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(
+                i,
+                body,
+                &mut exit_counter,
+                ppt_name.clone(),
+                param_decls,
+                &param_to_block_idx,
+                &ret_ty,
+            ); // match on Semi mainly for now, find return <expr>; and add an exit point.
         }
-
     }
 }
 
 #[allow(rustc::default_hash_types)]
-fn grok_fn_sig<'a>(decl: &'a P<FnDecl>, map: &'a HashMap<String, P<Item>>, depth_limit: u32) -> Vec<TopLevlDecl<'a>> {
+fn grok_fn_sig<'a>(
+    decl: &'a P<FnDecl>,
+    map: &'a HashMap<String, P<Item>>,
+    depth_limit: u32,
+) -> Vec<TopLevlDecl<'a>> {
     let mut var_decls: Vec<TopLevlDecl<'_>> = Vec::new();
     let mut i = 0;
     while i < decl.inputs.len() {
-
         let var_name = get_param_ident(&decl.inputs[i].pat);
         let mut is_ref = false;
         let mut do_write = true;
         // TODO: copy this code for getting a TopLevlDecl for the return value.
-        let toplevl_decl =
-            match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
-                RepType::Prim(p_type) => {
-                    TopLevlDecl {
-                        map: map,
-                        var_name: var_name.clone(),
-                        dec_type: p_type.clone(),
-                        rep_type: p_type.clone(),
-                        key: None,
-                        field_decls: None,
-                        contents: None,
-                    } // Ready to write this var decl.
-                }
-                RepType::HashCodeStruct(ty_string) => {
-                    let mut tmp =
-                        TopLevlDecl {
-                            map: map,
-                            var_name: var_name.clone(),
-                            dec_type: ty_string.clone(),
-                            rep_type: String::from("hashcode"),
-                            key: Some(ty_string.clone()),
-                            field_decls: Some(Vec::new()),
-                            contents: None,
-                        };
-                    tmp.build_fields(depth_limit, &mut do_write);
+        let toplevl_decl = match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+            RepType::Prim(p_type) => {
+                TopLevlDecl {
+                    map,
+                    var_name: var_name.clone(),
+                    dec_type: p_type.clone(),
+                    rep_type: p_type.clone(),
+                    key: None,
+                    field_decls: None,
+                    contents: None,
+                } // Ready to write this var decl.
+            }
+            RepType::HashCodeStruct(ty_string) => {
+                let mut tmp = TopLevlDecl {
+                    map,
+                    var_name: var_name.clone(),
+                    dec_type: ty_string.clone(),
+                    rep_type: String::from("hashcode"),
+                    key: Some(ty_string.clone()),
+                    field_decls: Some(Vec::new()),
+                    contents: None,
+                };
+                tmp.build_fields(depth_limit, &mut do_write);
 
-                    // Error checking
-                    if !do_write {
-                        // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
-                        match &mut tmp.field_decls {
-                            None => panic!("Expected some field_decls 1"),
-                            Some(field_decls) => {
-                                let mut j = 0;
-                                while j < field_decls.len() {
-                                    field_decls[j].var_name = String::from("false");
-                                    j += 1;
-                                }
+                // Error checking
+                if !do_write {
+                    // Any "fields" are invalid, but tmp could be an enum/union and pointer is valid.
+                    match &mut tmp.field_decls {
+                        None => panic!("Expected some field_decls 1"),
+                        Some(field_decls) => {
+                            let mut j = 0;
+                            while j < field_decls.len() {
+                                field_decls[j].var_name = String::from("false");
+                                j += 1;
                             }
                         }
                     }
-                    if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                        // this record is also invalid
-                        tmp.var_name = String::from("false");
-                    }
-                    tmp
                 }
-                RepType::PrimArray(p_type) => {
-                    TopLevlDecl {
-                        map: map,
-                        var_name: var_name.clone(),
+                if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                    // this record is also invalid
+                    tmp.var_name = String::from("false");
+                }
+                tmp
+            }
+            RepType::PrimArray(p_type) => {
+                TopLevlDecl {
+                    map,
+                    var_name: var_name.clone(),
+                    dec_type: format!("{}[]", p_type),
+                    rep_type: String::from("hashcode"),
+                    key: None,
+                    field_decls: None,
+                    contents: Some(ArrayContents {
+                        map,
+                        var_name: format!("{}[..]", var_name),
                         dec_type: format!("{}[]", p_type),
-                        rep_type: String::from("hashcode"),
+                        rep_type: format!("{}[]", p_type),
+                        enclosing_var: var_name.clone(),
                         key: None,
-                        field_decls: None,
-                        contents: Some(ArrayContents {
-                            map: map,
-                            var_name: format!("{}[..]", var_name),
-                            dec_type: format!("{}[]", p_type),
-                            rep_type: format!("{}[]", p_type),
-                            enclosing_var: var_name.clone(),
-                            key: None,
-                            sub_contents: None,
-                        }) // Ready to write this var_decl.
-                    }
+                        sub_contents: None,
+                    }), // Ready to write this var_decl.
                 }
-                RepType::HashCodeArray(ty_string) => {
-                    let mut tmp =
-                        TopLevlDecl {
-                            map: map,
-                            var_name: var_name.clone(),
-                            dec_type: format!("{}[]", ty_string),
-                            rep_type: String::from("hashcode"),
-                            key: Some(ty_string.clone()),
-                            field_decls: None,
-                            contents: Some(ArrayContents {
-                                map: map,
-                                var_name: format!("{}[..]", var_name),
-                                dec_type: format!("{}[]", ty_string),
-                                rep_type: String::from("hashcode[]"),
-                                enclosing_var: var_name.clone(),
-                                key: Some(ty_string.clone()),
-                                sub_contents: Some(Vec::new())
-                            })
-                        };
-                    match &mut tmp.contents {
-                        None => panic!(""),
-                        Some(contents) => {
-                            contents.build_contents(depth_limit - 1, &mut do_write);
+            }
+            RepType::HashCodeArray(ty_string) => {
+                let mut tmp = TopLevlDecl {
+                    map,
+                    var_name: var_name.clone(),
+                    dec_type: format!("{}[]", ty_string),
+                    rep_type: String::from("hashcode"),
+                    key: Some(ty_string.clone()),
+                    field_decls: None,
+                    contents: Some(ArrayContents {
+                        map,
+                        var_name: format!("{}[..]", var_name),
+                        dec_type: format!("{}[]", ty_string),
+                        rep_type: String::from("hashcode[]"),
+                        enclosing_var: var_name.clone(),
+                        key: Some(ty_string.clone()),
+                        sub_contents: Some(Vec::new()),
+                    }),
+                };
+                match &mut tmp.contents {
+                    None => panic!(""),
+                    Some(contents) => {
+                        contents.build_contents(depth_limit - 1, &mut do_write);
 
-                            // Error checking: note for this and similar, tmp.contents valid is equivalent to tmp valid, if we have Vec of enums, contents is pointers.
-                            if !do_write {
-                                // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
-                                match &mut contents.sub_contents {
-                                    None => panic!("Expected some field_decls 1"),
-                                    Some(sub_contents) => {
-                                        let mut j = 0;
-                                        while j < sub_contents.len() {
-                                            sub_contents[j].var_name = String::from("false");
-                                            j += 1;
-                                        }
+                        // Error checking: note for this and similar, tmp.contents valid is equivalent to tmp valid, if we have Vec of enums, contents is pointers.
+                        if !do_write {
+                            // Any "fields" are invalid, but tmp could be an enum/union and pointers is valid.
+                            match &mut contents.sub_contents {
+                                None => panic!("Expected some field_decls 1"),
+                                Some(sub_contents) => {
+                                    let mut j = 0;
+                                    while j < sub_contents.len() {
+                                        sub_contents[j].var_name = String::from("false");
+                                        j += 1;
                                     }
                                 }
                             }
+                        }
 
-                            if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
-                                // this record is also invalid
-                                tmp.var_name = String::from("false");
-                            }
+                        if ty_string.starts_with("Option") || ty_string.starts_with("Result") {
+                            // this record is also invalid
+                            tmp.var_name = String::from("false");
                         }
                     }
-                    tmp
                 }
-            };
+                tmp
+            }
+        };
         var_decls.push(toplevl_decl);
         i += 1;
     }
@@ -1817,11 +1850,13 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                             // By now, all exit ppts are
                             // explicit Semi(Ret) stmts.
                             // self.grok_fn_body(body, &ret_ty);
-                            self.grok_fn_body(ppt_name.clone(),
-                                              body,
-                                              &mut param_decls,
-                                              param_to_block_idx,
-                                              &f.sig.decl.output);
+                            self.grok_fn_body(
+                                ppt_name.clone(),
+                                body,
+                                &mut param_decls,
+                                param_to_block_idx,
+                                &f.sig.decl.output,
+                            );
                         }
                     }
                 }
@@ -1889,7 +1924,6 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             let mut decls_visitor = DaikonDeclsVisitor { map: &struct_map, depth_limit: 4 }; // off by one to match dtrace
             decls_visitor.visit_crate(&krate);
         }
-
 
         // println!("\n\n\ncrate:\n\n{}", pprust::crate_to_string_for_macros(&krate));
         assert_eq!(krate.id, ast::CRATE_NODE_ID);

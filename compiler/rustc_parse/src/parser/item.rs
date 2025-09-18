@@ -1,51 +1,36 @@
 use std::fmt::Write;
 use std::mem;
 
-use std::sync::{LazyLock, Mutex};
+use crate::parser::daikon_strs::{
+    BOOL, CHAR, F32, F64, I8, I16, I32, I64, I128, ISIZE, STR, STRING, U8, U16, U32, U64, U128,
+    UNIT, USIZE, VEC, base_impl, build_call_print_field, build_daikon_tmp_vec,
+    build_daikon_tmp_vec_ampersand, build_daikon_tmp_vec_field_userdef,
+    build_daikon_tmp_vec_field_userdef_ampersand, build_daikon_tmp_vec_userdef,
+    build_dtrace_print_fields_noop, build_dtrace_print_fields_vec_noop,
+    build_dtrace_print_xfield_epilogue, build_dtrace_print_xfield_middle,
+    build_dtrace_print_xfield_prologue, build_entry, build_exit, build_field_prim,
+    build_field_prim_ref, build_field_userdef, build_field_userdef_with_ampersand_access,
+    build_imports, build_let_ret, build_phony_ret, build_pointer_arr, build_pointer_arr_ret,
+    build_pointer_arr_userdef, build_pointer_vec, build_pointer_vec_ret, build_pointer_vec_userdef,
+    build_pointers_vec_userdef, build_prim, build_prim_field_tostring, build_prim_ref,
+    build_prim_ref_ret, build_prim_ret, build_prim_with_tostring, build_prim_with_tostring_ret,
+    build_print_pointer_vec, build_print_pointer_vec_userdef, build_print_prim_vec,
+    build_print_prim_vec_for_field, build_print_string_vec, build_print_string_vec_for_field,
+    build_print_vec_fields, build_print_vec_fields_for_field, build_print_vec_fields_userdef,
+    build_print_xfield, build_print_xfield_for_vec, build_print_xfield_string,
+    build_print_xfield_vec, build_ret, build_tmp_prim_vec_for_field, build_tmp_vec_for_field,
+    build_tmp_vec_for_field_ampersand, build_tmp_vec_prim, build_userdef, build_userdef_ret,
+    build_userdef_ret_ampersand, build_userdef_with_ampersand_access, build_void_return,
+    daikon_lib, dtrace_newline, dtrace_print_fields_epilogue, dtrace_print_fields_prologue,
+    dtrace_print_fields_vec_epilogue, dtrace_print_fields_vec_prologue,
+    dtrace_print_xfields_vec_epilogue, dtrace_print_xfields_vec_prologue, init_nonce,
+};
+use crate::unwrap_or_emit_fatal;
 use rustc_ast::mut_visit::*;
-use std::io::Write as FileWrite;
 use rustc_ast::*;
 use std::collections::HashMap;
-use crate::unwrap_or_emit_fatal;
-use crate::parser::daikon_strs::{
-    I8, I16, I32, I64, I128, ISIZE,
-    U8, U16, U32, U64, U128, USIZE,
-    F32, F64, CHAR, BOOL, UNIT, STR,
-    STRING, VEC, build_entry, init_nonce, build_prim,
-    build_userdef, build_exit, build_let_ret,
-    build_ret, dtrace_print_fields_prologue,
-    build_field_prim, build_field_userdef,
-    dtrace_print_fields_epilogue, base_impl,
-    build_phony_ret, build_void_return, daikon_lib,
-    build_imports,
-    build_userdef_with_ampersand_access,
-    build_field_userdef_with_ampersand_access,
-    build_field_prim_ref, build_prim_field_tostring,
-    build_prim_ref, build_prim_with_tostring, dtrace_newline,
-    dtrace_print_fields_vec_prologue, build_print_vec_fields_userdef,
-    build_print_xfield_vec, build_print_pointer_vec_userdef,
-    build_daikon_tmp_vec_userdef, dtrace_print_xfields_vec_prologue,
-    build_print_xfield, dtrace_print_xfields_vec_epilogue,
-    dtrace_print_fields_vec_epilogue, build_daikon_tmp_vec,
-    build_print_prim_vec, build_tmp_vec_prim, build_pointer_vec,
-    build_print_pointer_vec, build_print_vec_fields,
-    build_call_print_field, build_tmp_prim_vec_for_field,
-    build_print_prim_vec_for_field,
-    build_dtrace_print_xfield_prologue,
-    build_tmp_vec_for_field, build_pointer_vec_userdef,
-    build_pointers_vec_userdef, build_dtrace_print_xfield_middle,
-    build_print_vec_fields_for_field, build_dtrace_print_xfield_epilogue,
-    build_daikon_tmp_vec_ampersand, build_tmp_vec_for_field_ampersand,
-    build_print_xfield_for_vec,
-    build_pointer_arr, build_dtrace_print_fields_noop,
-    build_dtrace_print_fields_vec_noop, build_pointer_arr_userdef,
-    build_prim_with_tostring_ret, build_prim_ref_ret, build_prim_ret,
-    build_userdef_ret_ampersand, build_userdef_ret, build_pointer_vec_ret,
-    build_pointer_arr_ret, build_daikon_tmp_vec_field_userdef,
-    build_daikon_tmp_vec_field_userdef_ampersand,
-    build_print_string_vec, build_print_string_vec_for_field,
-    build_print_xfield_string
-};
+use std::io::Write as FileWrite;
+use std::sync::{LazyLock, Mutex};
 
 use ast::token::IdentIsRaw;
 // use rustc_ast::ast::*;
@@ -71,8 +56,6 @@ use super::{
 };
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
-
-// static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));register
 
 /*
    Visitor for defining struct-specific routines
@@ -168,7 +151,9 @@ fn grok_vec_args(path: &Path, is_ref: &mut bool) -> BasicType {
                 AngleBracketedArg::Arg(arg) => match &arg {
                     GenericArg::Type(arg_type) => match &get_basic_type(&arg_type.kind, is_ref) {
                         BasicType::Prim(p_type) => BasicType::PrimVec(String::from(p_type)),
-                        BasicType::UserDef(basic_type) => BasicType::UserDefVec(String::from(basic_type)),
+                        BasicType::UserDef(basic_type) => {
+                            BasicType::UserDefVec(String::from(basic_type))
+                        }
                         _ => BasicType::Error,
                     },
                     _ => BasicType::Error,
@@ -195,16 +180,16 @@ fn cut_lifetimes(spliced_struct: String) -> String {
 }
 
 pub fn jot_output_name(s: String) {
-    let end =
-        match s.rfind(".") { // .rs
-            None => panic!("no . at the end of input file name"),
-            Some(end) => end
-        };
-    let mut start =
-        match s.rfind("/") { // .../<crate>.rs
-            None => 0,
-            Some(slash) => slash+1
-        };
+    let end = match s.rfind(".") {
+        // .rs
+        None => panic!("no . at the end of input file name"),
+        Some(end) => end,
+    };
+    let mut start = match s.rfind("/") {
+        // .../<crate>.rs
+        None => 0,
+        Some(slash) => slash + 1,
+    };
     let mut res = String::from("");
     while start < end {
         res.push_str(&format!("{}", s.chars().nth(start).unwrap()));
@@ -225,13 +210,14 @@ fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
                     String::from("")
                 }
                 Some(bound) => {
-                    let mut i = idx+1;
+                    let mut i = idx + 1;
                     let mut res = String::from("");
                     while i < *bound - 1 {
                         res.push_str(&String::from(pp_struct.chars().nth(i).unwrap()));
                         i += 1;
                     }
-                    if res.starts_with("struct") { // forgot pub struct ...
+                    if res.starts_with("struct") {
+                        // forgot pub struct ...
                         return res[7..].to_string();
                     } else if res.starts_with("enum") {
                         return res[5..].to_string();
@@ -247,23 +233,20 @@ fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
 
 fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
     match &kind {
-        TyKind::Array(arr_type, _anon_const) => {
-            match &get_basic_type(&arr_type.kind, is_ref) {
-                BasicType::Prim(p_type) => BasicType::PrimArray(String::from(p_type)),
-                BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
-                _ => panic!("higher-dim arrays not supported")
-            }
-        }
+        TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
+            BasicType::Prim(p_type) => BasicType::PrimArray(String::from(p_type)),
+            BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
+            _ => panic!("higher-dim arrays not supported"),
+        },
         TyKind::Slice(arr_type) => match &get_basic_type(&arr_type.kind, is_ref) {
             BasicType::Prim(p_type) => BasicType::PrimArray(String::from(p_type)),
             BasicType::UserDef(basic_type) => BasicType::UserDefArray(String::from(basic_type)),
-            _ => panic!("higher-dim arrays not supported")
-        }
+            _ => panic!("higher-dim arrays not supported"),
+        },
         TyKind::Ptr(_mut_ty) => BasicType::Error,
         TyKind::Ref(_, mut_ty) => {
             *is_ref = true;
-            // use recursion to get to the underlying type
-            // :O very scary scary
+            // recurse to get to the underlying type
             get_basic_type(&mut_ty.ty.kind, is_ref)
         }
         TyKind::Path(_, path) => {
@@ -297,13 +280,15 @@ fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
 }
 
 fn last_stmt_is_void_return(block: &P<Block>) -> bool {
-    if block.stmts.len() == 0 { panic!("no stmts to check"); }
-    match &block.stmts[block.stmts.len()-1].kind {
+    if block.stmts.len() == 0 {
+        panic!("no stmts to check");
+    }
+    match &block.stmts[block.stmts.len() - 1].kind {
         StmtKind::Semi(semi) => match &semi.kind {
             ExprKind::Ret(None) => true,
-            _ => false
+            _ => false,
         },
-        _ => false
+        _ => false,
     }
 }
 
@@ -319,9 +304,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             block.stmts.push(stmt.clone());
                         }
                     }
-                }
-                _ => panic!("Expected Fn in append_to_block")
-            }
+                },
+                _ => panic!("Expected Fn in append_to_block"),
+            },
         }
     }
 
@@ -330,161 +315,191 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let items = self.parser.parse_items_from_string(stuff.clone());
         match &items {
             Err(_why) => panic!("Internal String parsing failed"),
-            Ok(items) => {
-                match &items[0].kind {
-                    ItemKind::Fn(wrapper) => match &wrapper.body {
-                        None => panic!("No body to insert"),
-                        Some(body) => {
-                            for stmt in body.stmts.clone() {
-                                block.stmts.insert(i, stmt.clone());
-                                i += 1;
-                            }
+            Ok(items) => match &items[0].kind {
+                ItemKind::Fn(wrapper) => match &wrapper.body {
+                    None => panic!("No body to insert"),
+                    Some(body) => {
+                        for stmt in body.stmts.clone() {
+                            block.stmts.insert(i, stmt.clone());
+                            i += 1;
                         }
                     }
-                    _ => panic!("Internal Daikon str is malformed")
-                }
-            }
+                },
+                _ => panic!("Internal Daikon str is malformed"),
+            },
         }
         i
     }
 
     #[allow(rustc::default_hash_types)]
-    fn grok_expr_for_if(&mut self,
-                        expr: &mut P<Expr>,
-                        exit_counter: &mut usize,
-                        ppt_name: String,
-                        dtrace_param_blocks: &mut Vec<String>,
-                        param_to_block_idx: &HashMap<String, i32>,
-                        ret_ty: &FnRetTy,
-                        daikon_tmp_counter: &mut u32) {
+    fn grok_expr_for_if(
+        &mut self,
+        expr: &mut P<Expr>,
+        exit_counter: &mut usize,
+        ppt_name: String,
+        dtrace_param_blocks: &mut Vec<String>,
+        param_to_block_idx: &HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+        daikon_tmp_counter: &mut u32,
+    ) {
         match &mut expr.kind {
             ExprKind::Block(block, _) => {
-                self.grok_block(ppt_name.clone(),
-                                block,
-                                dtrace_param_blocks,
-                                &param_to_block_idx,
-                                &ret_ty,
-                                exit_counter,
-                                daikon_tmp_counter);
+                self.grok_block(
+                    ppt_name.clone(),
+                    block,
+                    dtrace_param_blocks,
+                    &param_to_block_idx,
+                    &ret_ty,
+                    exit_counter,
+                    daikon_tmp_counter,
+                );
             }
             ExprKind::If(_, if_block, None) => {
-                self.grok_block(ppt_name.clone(),
-                                if_block,
-                                dtrace_param_blocks,
-                                &param_to_block_idx,
-                                &ret_ty,
-                                exit_counter,
-                                daikon_tmp_counter);
+                self.grok_block(
+                    ppt_name.clone(),
+                    if_block,
+                    dtrace_param_blocks,
+                    &param_to_block_idx,
+                    &ret_ty,
+                    exit_counter,
+                    daikon_tmp_counter,
+                );
             }
             ExprKind::If(_, if_block, Some(another_expr)) => {
-                self.grok_block(ppt_name.clone(),
-                                if_block,
-                                dtrace_param_blocks,
-                                &param_to_block_idx,
-                                &ret_ty,
-                                exit_counter,
-                                daikon_tmp_counter);
-                self.grok_expr_for_if(another_expr,
-                                      exit_counter,
-                                      ppt_name.clone(),
-                                      dtrace_param_blocks,
-                                      &param_to_block_idx,
-                                      &ret_ty,
-                                      daikon_tmp_counter);
+                self.grok_block(
+                    ppt_name.clone(),
+                    if_block,
+                    dtrace_param_blocks,
+                    &param_to_block_idx,
+                    &ret_ty,
+                    exit_counter,
+                    daikon_tmp_counter,
+                );
+                self.grok_expr_for_if(
+                    another_expr,
+                    exit_counter,
+                    ppt_name.clone(),
+                    dtrace_param_blocks,
+                    &param_to_block_idx,
+                    &ret_ty,
+                    daikon_tmp_counter,
+                );
             }
-            _ => panic!("Internal error handling if stmt with else!")
+            _ => panic!("Internal error handling if stmt with else!"),
         }
     }
 
     // grok body.stmts[i]
     #[allow(rustc::default_hash_types)]
-    fn grok_stmt(&mut self,
-                 loc: usize,
-                 body: &mut P<Block>,
-                 exit_counter: &mut usize,
-                 ppt_name: String,
-                 dtrace_param_blocks: &mut Vec<String>,
-                 param_to_block_idx: &HashMap<String, i32>,
-                 ret_ty: &FnRetTy,
-                 daikon_tmp_counter: &mut u32) -> usize {
+    fn grok_stmt(
+        &mut self,
+        loc: usize,
+        body: &mut P<Block>,
+        exit_counter: &mut usize,
+        ppt_name: String,
+        dtrace_param_blocks: &mut Vec<String>,
+        param_to_block_idx: &HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+        daikon_tmp_counter: &mut u32,
+    ) -> usize {
         let mut i = loc;
         let stmt = body.stmts[i].clone();
         // println!("{}\n\n", pprust::stmt_to_string(&stmt));
         match &mut body.stmts[i].kind {
-            StmtKind::Let(_local) => { return i+1; }
-            StmtKind::Item(_item) => { return i+1; }
+            StmtKind::Let(_local) => {
+                return i + 1;
+            }
+            StmtKind::Item(_item) => {
+                return i + 1;
+            }
             StmtKind::Expr(no_semi_expr) => match &mut no_semi_expr.kind {
                 // Blocks.
                 // recurse on nested block,
                 // but we still only grokked one (block) stmt, so just
                 // move to the next stmt (return i+1)
                 ExprKind::Block(block, _) => {
-                    self.grok_block(ppt_name.clone(),
-                                    block,
-                                    dtrace_param_blocks,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter,
-                                    daikon_tmp_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        block,
+                        dtrace_param_blocks,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                        daikon_tmp_counter,
+                    );
+                    return i + 1;
                 }
-                ExprKind::If(_, if_block, None) => { // no else
-                    self.grok_block(ppt_name.clone(),
-                                    if_block,
-                                    dtrace_param_blocks,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter,
-                                    daikon_tmp_counter);
-                    return i+1;
+                ExprKind::If(_, if_block, None) => {
+                    // no else
+                    self.grok_block(
+                        ppt_name.clone(),
+                        if_block,
+                        dtrace_param_blocks,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                        daikon_tmp_counter,
+                    );
+                    return i + 1;
                 }
-                ExprKind::If(_, if_block, Some(expr)) => { // yes else
-                    self.grok_block(ppt_name.clone(),
-                                    if_block,
-                                    dtrace_param_blocks,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter,
-                                    daikon_tmp_counter);
+                ExprKind::If(_, if_block, Some(expr)) => {
+                    // yes else
+                    self.grok_block(
+                        ppt_name.clone(),
+                        if_block,
+                        dtrace_param_blocks,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                        daikon_tmp_counter,
+                    );
 
-                    self.grok_expr_for_if(expr,
-                                          exit_counter,
-                                          ppt_name.clone(),
-                                          dtrace_param_blocks,
-                                          &param_to_block_idx,
-                                          &ret_ty,
-                                          daikon_tmp_counter);
-                    return i+1;
+                    self.grok_expr_for_if(
+                        expr,
+                        exit_counter,
+                        ppt_name.clone(),
+                        dtrace_param_blocks,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        daikon_tmp_counter,
+                    );
+                    return i + 1;
                 }
                 ExprKind::While(_, while_block, _) => {
-                    self.grok_block(ppt_name.clone(),
-                                    while_block,
-                                    dtrace_param_blocks,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter,
-                                    daikon_tmp_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        while_block,
+                        dtrace_param_blocks,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                        daikon_tmp_counter,
+                    );
+                    return i + 1;
                 }
                 ExprKind::ForLoop { pat: _, iter: _, body: for_block, label: _, kind: _ } => {
-                    self.grok_block(ppt_name.clone(),
-                                    for_block,
-                                    dtrace_param_blocks,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter,
-                                    daikon_tmp_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        for_block,
+                        dtrace_param_blocks,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                        daikon_tmp_counter,
+                    );
+                    return i + 1;
                 }
                 ExprKind::Loop(loop_block, _, _) => {
-                    self.grok_block(ppt_name.clone(),
-                                    loop_block,
-                                    dtrace_param_blocks,
-                                    &param_to_block_idx,
-                                    &ret_ty,
-                                    exit_counter,
-                                    daikon_tmp_counter);
-                    return i+1;
+                    self.grok_block(
+                        ppt_name.clone(),
+                        loop_block,
+                        dtrace_param_blocks,
+                        &param_to_block_idx,
+                        &ret_ty,
+                        exit_counter,
+                        daikon_tmp_counter,
+                    );
+                    return i + 1;
                 }
                 ExprKind::Match(_, arms, _) => {
                     let mut j = 0;
@@ -502,14 +517,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     //                 daikon_tmp_counter);
                                 }
                                 _ => {} // TODO: more careful analysis on whether this is supposed to be a return expr or not, e.g. println/panic vs 7.
-                            }
+                            },
                         }
                         j += 1;
                     }
-                    return i+1;
+                    return i + 1;
                 } // missing Match blocks, TryBlock, Const block? probably more
                 _ => {}
-            }
+            },
             _ => {}
         }
         match &stmt.kind {
@@ -545,47 +560,49 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     let mut ret_is_ref = false;
                     let r_ty = match &ret_ty {
                         FnRetTy::Default(_span) => BasicType::NoRet,
-                        FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref)
+                        FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
                     };
                     match &r_ty {
                         BasicType::Prim(p_type) => {
                             let pr_ty = match &ret_ty {
                                 FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type")
+                                _ => panic!("Inconsistent return type"),
                             };
                             // Process return expr
                             let expr = pprust::expr_to_string(&return_expr);
                             let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
                             i = self.insert_into_block(i, ret_let, body);
 
-                            let prim_record_ret =
-                                if p_type == "String" || p_type == "str" { // TODO: add quotes around string values
-                                    // build_prim_with_tostring(p_type.clone(), String::from("ret"))
-                                    build_prim_with_tostring_ret() // FOR RETURN
-                                } else if ret_is_ref {
-                                    // build_prim_ref(p_type.clone(), String::from("ret"))
-                                    build_prim_ref_ret(p_type.clone()) // FOR RETURN
-                                } else {
-                                    // build_prim(p_type.clone(), String::from("ret"))
-                                    build_prim_ret(p_type.clone()) // FOR RETURN
-                                };
+                            let prim_record_ret = if p_type == "String" || p_type == "str" {
+                                // TODO: add quotes around string values
+                                // build_prim_with_tostring(p_type.clone(), String::from("ret"))
+                                build_prim_with_tostring_ret() // FOR RETURN
+                            } else if ret_is_ref {
+                                // build_prim_ref(p_type.clone(), String::from("ret"))
+                                build_prim_ref_ret(p_type.clone()) // FOR RETURN
+                            } else {
+                                // build_prim(p_type.clone(), String::from("ret"))
+                                build_prim_ret(p_type.clone()) // FOR RETURN
+                            };
                             i = self.insert_into_block(i, prim_record_ret, body);
                         }
                         BasicType::UserDef(userdef_type) => {
                             // Finish up.
-                            if userdef_type.starts_with("Option") || userdef_type.starts_with("Result") {
+                            if userdef_type.starts_with("Option")
+                                || userdef_type.starts_with("Result")
+                            {
                                 // println!("hi explicit option return");
                                 i = self.insert_into_block(i, dtrace_newline(), body);
 
                                 // let inc = build_inc(ppt_name.clone());
                                 // i = self.insert_into_block(i, inc, body);
                                 // i+1 because we are leaving the return stmt in.
-                                return i+1;
+                                return i + 1;
                             }
 
                             let pr_ty = match &ret_ty {
                                 FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type")
+                                _ => panic!("Inconsistent return type"),
                             };
                             // Process return expr
                             let expr = pprust::expr_to_string(&return_expr);
@@ -605,7 +622,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         BasicType::PrimVec(p_type) => {
                             let pr_ty = match &ret_ty {
                                 FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type")
+                                _ => panic!("Inconsistent return type"),
                             };
                             let expr = pprust::expr_to_string(&return_expr);
                             let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -615,28 +632,36 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             *daikon_tmp_counter += 1;
                             let next_tmp = daikon_tmp_counter.to_string();
                             *daikon_tmp_counter += 1;
-                            let print_vec =
-                                if p_type == "String" || p_type == "str" {
-                                    build_print_string_vec(format!("__daikon_tmp{}", first_tmp),
-                                                           String::from("return"))
-                                } else {
-                                    build_print_prim_vec(p_type.clone(), format!("__daikon_tmp{}", first_tmp),
-                                            String::from("return"))
-                                };
-                            let prim_vec_record_ret =
-                                format!("{}\n{}\n{}",
-                                        build_tmp_vec_prim(first_tmp.clone(), p_type.to_string(), next_tmp.clone(),
-                                            String::from("__daikon_ret")),
-                                        // build_pointer_vec(String::from("ret")),
-                                        build_pointer_vec_ret(), // FOR RETURN
-                                        print_vec.clone()
-                                );
+                            let print_vec = if p_type == "String" || p_type == "str" {
+                                build_print_string_vec(
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return"),
+                                )
+                            } else {
+                                build_print_prim_vec(
+                                    p_type.clone(),
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return"),
+                                )
+                            };
+                            let prim_vec_record_ret = format!(
+                                "{}\n{}\n{}",
+                                build_tmp_vec_prim(
+                                    first_tmp.clone(),
+                                    p_type.to_string(),
+                                    next_tmp.clone(),
+                                    String::from("__daikon_ret")
+                                ),
+                                // build_pointer_vec(String::from("ret")),
+                                build_pointer_vec_ret(), // FOR RETURN
+                                print_vec.clone()
+                            );
                             i = self.insert_into_block(i, prim_vec_record_ret, body);
                         }
                         BasicType::UserDefVec(basic_type) => {
                             let pr_ty = match &ret_ty {
                                 FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type")
+                                _ => panic!("Inconsistent return type"),
                             };
                             let expr = pprust::expr_to_string(&return_expr);
                             let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -646,20 +671,33 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             *daikon_tmp_counter += 1;
                             let next_tmp = daikon_tmp_counter.to_string();
                             *daikon_tmp_counter += 1;
-                            let userdef_vec_record_ret =
-                                format!("{}\n{}\n{}\n{}",
-                                        build_daikon_tmp_vec(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                            String::from("__daikon_ret")),
-                                        // build_pointer_vec(String::from("ret")),
-                                        build_pointer_vec_ret(), // FOR RETURN
-                                        build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")), // WARNING, not sure
-                                        build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")));
+                            let userdef_vec_record_ret = format!(
+                                "{}\n{}\n{}\n{}",
+                                build_daikon_tmp_vec(
+                                    first_tmp.clone(),
+                                    basic_type.to_string(),
+                                    next_tmp.clone(),
+                                    String::from("__daikon_ret")
+                                ),
+                                // build_pointer_vec(String::from("ret")),
+                                build_pointer_vec_ret(), // FOR RETURN
+                                build_print_pointer_vec(
+                                    basic_type.to_string(),
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return")
+                                ), // WARNING, not sure
+                                build_print_vec_fields(
+                                    basic_type.to_string(),
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return")
+                                )
+                            );
                             i = self.insert_into_block(i, userdef_vec_record_ret, body);
                         }
                         BasicType::PrimArray(p_type) => {
                             let pr_ty = match &ret_ty {
                                 FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type")
+                                _ => panic!("Inconsistent return type"),
                             };
                             let expr = pprust::expr_to_string(&return_expr);
                             let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -669,27 +707,36 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             *daikon_tmp_counter += 1;
                             let next_tmp = daikon_tmp_counter.to_string();
                             *daikon_tmp_counter += 1;
-                            let print_vec =
-                                if p_type == "String" || p_type == "str" {
-                                    build_print_string_vec(format!("__daikon_tmp{}", first_tmp),
-                                                           String::from("return"))
-                                } else {
-                                    build_print_prim_vec(p_type.clone(), format!("__daikon_tmp{}", first_tmp),
-                                            String::from("return"))
-                                };
-                            let prim_vec_record_ret =
-                                format!("{}\n{}\n{}",
-                                        build_tmp_vec_prim(first_tmp.clone(), p_type.to_string(), next_tmp.clone(),
-                                            String::from("__daikon_ret")),
-                                        // build_pointer_arr(String::from("ret")),
-                                        build_pointer_arr_ret(), // FOR RETURN
-                                        print_vec.clone());
+                            let print_vec = if p_type == "String" || p_type == "str" {
+                                build_print_string_vec(
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return"),
+                                )
+                            } else {
+                                build_print_prim_vec(
+                                    p_type.clone(),
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return"),
+                                )
+                            };
+                            let prim_vec_record_ret = format!(
+                                "{}\n{}\n{}",
+                                build_tmp_vec_prim(
+                                    first_tmp.clone(),
+                                    p_type.to_string(),
+                                    next_tmp.clone(),
+                                    String::from("__daikon_ret")
+                                ),
+                                // build_pointer_arr(String::from("ret")),
+                                build_pointer_arr_ret(), // FOR RETURN
+                                print_vec.clone()
+                            );
                             i = self.insert_into_block(i, prim_vec_record_ret, body);
                         }
                         BasicType::UserDefArray(basic_type) => {
                             let pr_ty = match &ret_ty {
                                 FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type")
+                                _ => panic!("Inconsistent return type"),
                             };
                             let expr = pprust::expr_to_string(&return_expr);
                             let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -699,18 +746,31 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             *daikon_tmp_counter += 1;
                             let next_tmp = daikon_tmp_counter.to_string();
                             *daikon_tmp_counter += 1;
-                            let userdef_vec_record_ret =
-                                format!("{}\n{}\n{}\n{}",
-                                        build_daikon_tmp_vec(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                            String::from("__daikon_ret")),
-                                        // build_pointer_arr(String::from("ret")),
-                                        build_pointer_arr_ret(), // FOR RETURN
-                                        build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")),
-                                        build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")));
+                            let userdef_vec_record_ret = format!(
+                                "{}\n{}\n{}\n{}",
+                                build_daikon_tmp_vec(
+                                    first_tmp.clone(),
+                                    basic_type.to_string(),
+                                    next_tmp.clone(),
+                                    String::from("__daikon_ret")
+                                ),
+                                // build_pointer_arr(String::from("ret")),
+                                build_pointer_arr_ret(), // FOR RETURN
+                                build_print_pointer_vec(
+                                    basic_type.to_string(),
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return")
+                                ),
+                                build_print_vec_fields(
+                                    basic_type.to_string(),
+                                    format!("__daikon_tmp{}", first_tmp),
+                                    String::from("return")
+                                )
+                            );
                             i = self.insert_into_block(i, userdef_vec_record_ret, body);
                         }
-                        BasicType::NoRet => {},
-                        BasicType::Error => panic!("ret_ty is BasicType::Error")
+                        BasicType::NoRet => {}
+                        BasicType::Error => panic!("ret_ty is BasicType::Error"),
                     }
 
                     i = self.insert_into_block(i, dtrace_newline(), body);
@@ -726,11 +786,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
                     // store (ok), log (ok), inc nonce counter (ok), and return (ok)
                 }
-                ExprKind::Call(_call, _params) => { return i+1; } // Maybe check for drop and other invalidations
-                _ => { return i+1; } // other things you overlooked
-            }
+                ExprKind::Call(_call, _params) => {
+                    return i + 1;
+                } // Maybe check for drop and other invalidations
+                _ => {
+                    return i + 1;
+                } // other things you overlooked
+            },
             // non-block exprs are exit points, approximating this with a catch-all for non-semi exprs
-            StmtKind::Expr(no_semi_expr) => { // we know it is not a block, so it must be trailing no-semi return expr
+            StmtKind::Expr(no_semi_expr) => {
+                // we know it is not a block, so it must be trailing no-semi return expr
                 let exit = build_exit(ppt_name.clone(), *exit_counter);
                 *exit_counter += 1;
 
@@ -744,13 +809,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 let mut ret_is_ref = false;
                 let r_ty = match &ret_ty {
                     FnRetTy::Default(_span) => BasicType::NoRet,
-                    FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref)
+                    FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
                 };
                 match &r_ty {
                     BasicType::Prim(p_type) => {
                         let pr_ty = match &ret_ty {
                             FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type")
+                            _ => panic!("Inconsistent return type"),
                         };
                         // Process return expr
                         let expr = pprust::expr_to_string(&no_semi_expr);
@@ -762,34 +827,35 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         // p_type == "String" => call to_string into dtrace_print_prim::<p_type>
                         // else if is_ref => call from_str(to_string()) into dtrace_print_prim::<p_type>
                         // else => call dtrace_print_prim::<p_type>
-                        let prim_record_ret =
-                            if p_type == "String" || p_type == "str" { // TODO: add quotes around string values
-                                // build_prim_with_tostring(p_type.clone(), String::from("ret"))
-                                build_prim_with_tostring_ret() // FOR RETURN
-                            } else if ret_is_ref {
-                                // build_prim_ref(p_type.clone(), String::from("ret"))
-                                build_prim_ref_ret(p_type.clone()) // FOR RETURN
-                            } else {
-                                // build_prim(p_type.clone(), String::from("ret"))
-                                build_prim_ret(p_type.clone()) // FOR RETURN
-                            };
+                        let prim_record_ret = if p_type == "String" || p_type == "str" {
+                            // TODO: add quotes around string values
+                            // build_prim_with_tostring(p_type.clone(), String::from("ret"))
+                            build_prim_with_tostring_ret() // FOR RETURN
+                        } else if ret_is_ref {
+                            // build_prim_ref(p_type.clone(), String::from("ret"))
+                            build_prim_ref_ret(p_type.clone()) // FOR RETURN
+                        } else {
+                            // build_prim(p_type.clone(), String::from("ret"))
+                            build_prim_ret(p_type.clone()) // FOR RETURN
+                        };
                         i = self.insert_into_block(i, prim_record_ret, body);
                     }
                     BasicType::UserDef(userdef_type) => {
                         // Finish up.
-                        if userdef_type.starts_with("Option") || userdef_type.starts_with("Result") {
+                        if userdef_type.starts_with("Option") || userdef_type.starts_with("Result")
+                        {
                             // println!("hello");
                             i = self.insert_into_block(i, dtrace_newline(), body);
 
                             // let inc = build_inc(ppt_name.clone());
                             // i = self.insert_into_block(i, inc, body);
                             // i+1 because we are leaving the return stmt in.
-                            return i+1;
+                            return i + 1;
                         }
 
                         let pr_ty = match &ret_ty {
                             FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type")
+                            _ => panic!("Inconsistent return type"),
                         };
                         // Process return expr
                         let expr = pprust::expr_to_string(&no_semi_expr);
@@ -809,7 +875,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     BasicType::PrimVec(p_type) => {
                         let pr_ty = match &ret_ty {
                             FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type")
+                            _ => panic!("Inconsistent return type"),
                         };
                         let expr = pprust::expr_to_string(&no_semi_expr);
                         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -819,27 +885,36 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let print_vec =
-                            if p_type == "String" || p_type == "str" {
-                                build_print_string_vec(format!("__daikon_tmp{}", first_tmp),
-                                                               String::from("return"))
-                            } else {
-                                build_print_prim_vec(p_type.clone(), format!("__daikon_tmp{}", first_tmp),
-                                        String::from("return"))
-                            };
-                        let prim_vec_record_ret =
-                            format!("{}\n{}\n{}",
-                                    build_tmp_vec_prim(first_tmp.clone(), p_type.to_string(), next_tmp.clone(),
-                                        String::from("__daikon_ret")),
-                                    // build_pointer_vec(String::from("ret")),
-                                    build_pointer_vec_ret(), // FOR RETURN
-                                    print_vec.clone());
+                        let print_vec = if p_type == "String" || p_type == "str" {
+                            build_print_string_vec(
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return"),
+                            )
+                        } else {
+                            build_print_prim_vec(
+                                p_type.clone(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return"),
+                            )
+                        };
+                        let prim_vec_record_ret = format!(
+                            "{}\n{}\n{}",
+                            build_tmp_vec_prim(
+                                first_tmp.clone(),
+                                p_type.to_string(),
+                                next_tmp.clone(),
+                                String::from("__daikon_ret")
+                            ),
+                            // build_pointer_vec(String::from("ret")),
+                            build_pointer_vec_ret(), // FOR RETURN
+                            print_vec.clone()
+                        );
                         i = self.insert_into_block(i, prim_vec_record_ret, body);
                     }
                     BasicType::UserDefVec(basic_type) => {
                         let pr_ty = match &ret_ty {
                             FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type")
+                            _ => panic!("Inconsistent return type"),
                         };
                         let expr = pprust::expr_to_string(&no_semi_expr);
                         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -849,20 +924,33 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let userdef_vec_record_ret =
-                            format!("{}\n{}\n{}\n{}",
-                                    build_daikon_tmp_vec(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                        String::from("__daikon_ret")),
-                                    // build_pointer_vec(String::from("ret")),
-                                    build_pointer_vec_ret(), // FOR RETURN
-                                    build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")),
-                                    build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")));
+                        let userdef_vec_record_ret = format!(
+                            "{}\n{}\n{}\n{}",
+                            build_daikon_tmp_vec(
+                                first_tmp.clone(),
+                                basic_type.to_string(),
+                                next_tmp.clone(),
+                                String::from("__daikon_ret")
+                            ),
+                            // build_pointer_vec(String::from("ret")),
+                            build_pointer_vec_ret(), // FOR RETURN
+                            build_print_pointer_vec(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return")
+                            ),
+                            build_print_vec_fields(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return")
+                            )
+                        );
                         i = self.insert_into_block(i, userdef_vec_record_ret, body);
                     }
                     BasicType::PrimArray(p_type) => {
                         let pr_ty = match &ret_ty {
                             FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type")
+                            _ => panic!("Inconsistent return type"),
                         };
                         let expr = pprust::expr_to_string(&no_semi_expr);
                         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -872,27 +960,36 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let print_vec =
-                            if p_type == "String" || p_type == "str" {
-                                build_print_string_vec(format!("__daikon_tmp{}", first_tmp),
-                                                       String::from("return"))
-                            } else {
-                                 build_print_prim_vec(p_type.clone(), format!("__daikon_tmp{}", first_tmp),
-                                        String::from("return"))
-                            };
-                        let prim_vec_record_ret =
-                            format!("{}\n{}\n{}",
-                                    build_tmp_vec_prim(first_tmp.clone(), p_type.to_string(), next_tmp.clone(),
-                                        String::from("__daikon_ret")),
-                                    // build_pointer_arr(String::from("ret")),
-                                    build_pointer_arr_ret(), // FOR RETURN
-                                    print_vec.clone());
+                        let print_vec = if p_type == "String" || p_type == "str" {
+                            build_print_string_vec(
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return"),
+                            )
+                        } else {
+                            build_print_prim_vec(
+                                p_type.clone(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return"),
+                            )
+                        };
+                        let prim_vec_record_ret = format!(
+                            "{}\n{}\n{}",
+                            build_tmp_vec_prim(
+                                first_tmp.clone(),
+                                p_type.to_string(),
+                                next_tmp.clone(),
+                                String::from("__daikon_ret")
+                            ),
+                            // build_pointer_arr(String::from("ret")),
+                            build_pointer_arr_ret(), // FOR RETURN
+                            print_vec.clone()
+                        );
                         i = self.insert_into_block(i, prim_vec_record_ret, body);
                     }
                     BasicType::UserDefArray(basic_type) => {
                         let pr_ty = match &ret_ty {
                             FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type")
+                            _ => panic!("Inconsistent return type"),
                         };
                         let expr = pprust::expr_to_string(&no_semi_expr);
                         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -902,18 +999,31 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         *daikon_tmp_counter += 1;
                         let next_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
-                        let userdef_vec_record_ret =
-                            format!("{}\n{}\n{}\n{}",
-                                    build_daikon_tmp_vec(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                        String::from("__daikon_ret")),
-                                    // build_pointer_arr(String::from("ret")),
-                                    build_pointer_arr_ret(), // FOR RETURN
-                                    build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")),
-                                    build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), String::from("return")));
+                        let userdef_vec_record_ret = format!(
+                            "{}\n{}\n{}\n{}",
+                            build_daikon_tmp_vec(
+                                first_tmp.clone(),
+                                basic_type.to_string(),
+                                next_tmp.clone(),
+                                String::from("__daikon_ret")
+                            ),
+                            // build_pointer_arr(String::from("ret")),
+                            build_pointer_arr_ret(), // FOR RETURN
+                            build_print_pointer_vec(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return")
+                            ),
+                            build_print_vec_fields(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                String::from("return")
+                            )
+                        );
                         i = self.insert_into_block(i, userdef_vec_record_ret, body);
                     }
-                    BasicType::NoRet => {},
-                    BasicType::Error => panic!("ret_ty is BasicType::Error")
+                    BasicType::NoRet => {}
+                    BasicType::Error => panic!("ret_ty is BasicType::Error"),
                 }
 
                 i = self.insert_into_block(i, dtrace_newline(), body);
@@ -927,7 +1037,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 // remove old return stmt
                 body.stmts.remove(i); // will want to println! this to debug
             }
-            _ => { return i+1; }
+            _ => {
+                return i + 1;
+            }
         }
         i
     }
@@ -937,17 +1049,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let base_impl_item = self.parser.parse_items_from_string(base_impl);
         match &base_impl_item {
             Err(_why) => panic!("Parsing base impl failed"),
-            Ok(base_impl_item) => base_impl_item[0].clone()
+            Ok(base_impl_item) => base_impl_item[0].clone(),
         }
     }
 
-    fn gen_impl_noop(&mut self,
-                     pp_struct: &String,
-                     struct_generics: &Generics) {
+    fn gen_impl_noop(&mut self, pp_struct: &String, struct_generics: &Generics) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
             ItemKind::Impl(i) => i,
-            _ => panic!("Base impl is not impl")
+            _ => panic!("Base impl is not impl"),
         };
         let mut stop = false;
         let spliced_struct = splice_struct(&pp_struct, &mut stop);
@@ -956,17 +1066,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
 
         let struct_as_ret = build_phony_ret(spliced_struct.clone());
-        the_impl.self_ty = 
-            match &self.parser.parse_items_from_string(struct_as_ret) {
-                Err(_why) => panic!("Parsing phony arg failed"),
-                Ok(arg_items) => match &arg_items[0].kind {
-                    ItemKind::Fn(phony) => match &phony.sig.decl.output {
-                        FnRetTy::Ty(ty) => ty.clone(),
-                        _ => panic!("Phony ret is none")
-                    }
-                    _ => panic!("Parsing phony fn failed")
-                }
-            };
+        the_impl.self_ty = match &self.parser.parse_items_from_string(struct_as_ret) {
+            Err(_why) => panic!("Parsing phony arg failed"),
+            Ok(arg_items) => match &arg_items[0].kind {
+                ItemKind::Fn(phony) => match &phony.sig.decl.output {
+                    FnRetTy::Ty(ty) => ty.clone(),
+                    _ => panic!("Phony ret is none"),
+                },
+                _ => panic!("Parsing phony fn failed"),
+            },
+        };
         the_impl.generics = struct_generics.clone();
 
         // We only need dtrace_print_fields and dtrace_print_fields_vec. xfield routines are only internal.
@@ -977,8 +1086,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 ItemKind::Impl(tmp_impl) => {
                     the_impl.items.push(tmp_impl.items[0].clone());
                 }
-                _ => panic!("Expected impl for noop 1")
-            }
+                _ => panic!("Expected impl for noop 1"),
+            },
         }
 
         let plain_struct = cut_lifetimes(spliced_struct.clone());
@@ -989,8 +1098,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 ItemKind::Impl(tmp_impl) => {
                     the_impl.items.push(tmp_impl.items[0].clone());
                 }
-                _ => panic!("Expected phony impl 2")
-            }
+                _ => panic!("Expected phony impl 2"),
+            },
         }
 
         self.mod_items.push(impl_item.clone());
@@ -1002,28 +1111,25 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // set generics to this struct's generics (clone)
     // push our function onto the impl block's items.
     // push that item onto self.mod_items (ok)
-    fn gen_impl(&mut self,
-                fields: &mut ThinVec<FieldDef>,
-                ty: &Ty,
-                struct_generics: &Generics) {
+    fn gen_impl(&mut self, fields: &mut ThinVec<FieldDef>, ty: &Ty, struct_generics: &Generics) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
             ItemKind::Impl(i) => i,
-            _ => panic!("Base impl is not impl")
+            _ => panic!("Base impl is not impl"),
         };
         // let spliced_struct = splice_struct(&pp_struct);
         // let struct_as_ret = build_phony_ret(spliced_struct.clone()); // TODO: fix splice string to handle pub keyword
         the_impl.self_ty = Box::new(ty.clone());
-            // match &self.parser.parse_items_from_string(struct_as_ret) {
-            //     Err(_why) => panic!("Parsing phony arg failed"),
-            //     Ok(arg_items) => match &arg_items[0].kind {
-            //         ItemKind::Fn(phony) => match &phony.sig.decl.output {
-            //             FnRetTy::Ty(ty) => ty.clone(),
-            //             _ => panic!("Phony ret is none")
-            //         }
-            //         _ => panic!("Parsing phony fn failed")
-            //     }
-            // };
+        // match &self.parser.parse_items_from_string(struct_as_ret) {
+        //     Err(_why) => panic!("Parsing phony arg failed"),
+        //     Ok(arg_items) => match &arg_items[0].kind {
+        //         ItemKind::Fn(phony) => match &phony.sig.decl.output {
+        //             FnRetTy::Ty(ty) => ty.clone(),
+        //             _ => panic!("Phony ret is none")
+        //         }
+        //         _ => panic!("Parsing phony fn failed")
+        //     }
+        // };
         the_impl.generics = struct_generics.clone();
 
         let dtrace_print_fields_fn = self.build_dtrace_print_fields(fields);
@@ -1033,25 +1139,26 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 ItemKind::Impl(tmp_impl) => {
                     the_impl.items.push(tmp_impl.items[0].clone());
                 }
-                _ => panic!("Expected phony impl 1")
-            }
+                _ => panic!("Expected phony impl 1"),
+            },
         }
 
         // Is this even important?
         // let plain_struct = cut_lifetimes(spliced_struct.clone());
         let plain_struct = match &ty.kind {
-                TyKind::Path(_, path) => String::from(path.segments[0].ident.as_str()),
-                _ => panic!("Why don't we have a path?")
-            };
-        let dtrace_print_fields_vec = self.build_dtrace_print_fields_vec(plain_struct.clone(), fields);
+            TyKind::Path(_, path) => String::from(path.segments[0].ident.as_str()),
+            _ => panic!("Why don't we have a path?"),
+        };
+        let dtrace_print_fields_vec =
+            self.build_dtrace_print_fields_vec(plain_struct.clone(), fields);
         match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
             Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
             Ok(items) => match &items[0].kind {
                 ItemKind::Impl(tmp_impl) => {
                     the_impl.items.push(tmp_impl.items[0].clone());
                 }
-                _ => panic!("Expected phony impl 2")
-            }
+                _ => panic!("Expected phony impl 2"),
+            },
         }
 
         // build dtrace_print_xfield_vec (AND dtrace_print_xfield...) here, then that should be it for generating fns in the impl.
@@ -1066,8 +1173,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         i += 1;
                     }
                 }
-                _ => panic!("Expected phony impl 3")
-            }
+                _ => panic!("Expected phony impl 3"),
+            },
         }
 
         self.mod_items.push(impl_item.clone());
@@ -1075,7 +1182,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // WARNING: also building dtrace_print_xfield here... be careful about different issues.
     // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
-    fn build_dtrace_print_xfield_vec(&mut self, plain_struct: String, fields: &ThinVec<FieldDef>) -> String {
+    fn build_dtrace_print_xfield_vec(
+        &mut self,
+        plain_struct: String,
+        fields: &ThinVec<FieldDef>,
+    ) -> String {
         let mut dtrace_print_xfields_vec = dtrace_print_xfields_vec_prologue();
 
         // not important for this to be here, these functions are self-contained so
@@ -1085,148 +1196,196 @@ impl<'a> DaikonDtraceVisitor<'a> {
         while i < fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
-                None => panic!("Field has no identifier")
+                None => panic!("Field has no identifier"),
             };
 
             let mut is_ref = false;
-            let dtrace_print_xfield =
-                match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
-                    BasicType::Prim(p_type) => { // We have a vec of ourselves, and the field is
-                        if p_type == "String" || p_type == "str" {
-                            build_print_xfield_string(field_name.clone(), plain_struct.clone())
-                        } else {
-                            build_print_xfield(field_name.clone(), plain_struct.clone()) // TODO: change this name to involve vec to be clear.
-                        }
+            let dtrace_print_xfield = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+                BasicType::Prim(p_type) => {
+                    // We have a vec of ourselves, and the field is
+                    if p_type == "String" || p_type == "str" {
+                        build_print_xfield_string(field_name.clone(), plain_struct.clone())
+                    } else {
+                        build_print_xfield(field_name.clone(), plain_struct.clone()) // TODO: change this name to involve vec to be clear.
                     }
-                    // TODO: mash:
-                    //            build_dtrace_print_xfield_prologue(),
-                    //            build_tmp_prim_vec_for_field(),
-                    //            build_pointer_vec_userdef(),
-                    //            build_dtrace_print_xfield_middle(),
-                    //            build_print_prim_vec_for_field(),
-                    //            build_dtrace_print_xfield_epilogue()
-                    BasicType::PrimVec(p_type) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let print_vec =
-                            if p_type == "String" || p_type == "str" {
-                                build_print_string_vec_for_field(format!("__daikon_tmp{}", first_tmp),  
-                                                                 field_name.clone())
-                            } else {
-                                build_print_prim_vec_for_field(p_type.to_string(), format!("__daikon_tmp{}", first_tmp),
-                                                                field_name.clone())
-                            };
-                        let f1 =
-                            format!("{}\n{}\n{}\n{}\n{}\n{}",
-                                    build_dtrace_print_xfield_prologue(field_name.clone()),
-                                    build_tmp_prim_vec_for_field(first_tmp.clone(), p_type.to_string(),
-                                                                next_tmp.clone(), field_name.clone()),
-                                    build_pointer_vec_userdef(field_name.clone()),
-                                    build_dtrace_print_xfield_middle(),
-                                    print_vec.clone(),
-                                    build_dtrace_print_xfield_epilogue());
-                        let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
-                        format!("{}\n{}", f1, f2)
-                    }
-                    // TODO: mash:
-                    //            build_dtrace_print_xfield_prologue(),
-                    //            build_tmp_vec_for_field(),
-                    //            build_pointer_vec_userdef() (for single pointer),
-                    //            build_pointers_vec_userdef() (for pointers),
-                    //            build_dtrace_print_xfield_middle() (depth check),
-                    //            build_print_vec_fields_for_field() (for contents),
-                    //            build_dtrace_print_xfield_epilogue() (closing brace)
-                    BasicType::UserDefVec(basic_struct) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        // We maintain that is_ref represents Vec/array args in this case.
-                        let tmp_vec =
-                            if is_ref {
-                                build_tmp_vec_for_field(first_tmp.clone(), basic_struct.to_string(),
-                                                        next_tmp.clone(), field_name.clone())
-                            } else {
-                                build_tmp_vec_for_field_ampersand(first_tmp.clone(), basic_struct.to_string(),
-                                                                  next_tmp.clone(), field_name.clone())
-                            };
-                        let f1 =
-                            format!("{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                                    build_dtrace_print_xfield_prologue(field_name.clone()),
-                                    tmp_vec.clone(),
-                                    build_pointer_vec_userdef(field_name.clone()),
-                                    build_pointers_vec_userdef(basic_struct.to_string(),
-                                                            format!("__daikon_tmp{}", first_tmp), field_name.clone()),
-                                    build_dtrace_print_xfield_middle(),
-                                    build_print_vec_fields_for_field(basic_struct.to_string(),
-                                                                    format!("__daikon_tmp{}", first_tmp), field_name.clone()),
-                                    build_dtrace_print_xfield_epilogue());
-                        let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
-                        format!("{}\n{}", f1, f2)
-                    }
-                    // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
-                    // Except pointer is diff, as_ptr() as usize vs as *const _ as *const () as usize...
-                    BasicType::PrimArray(p_type) => {
-                        // UNTRUSTED:
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let print_vec =
-                            if p_type == "String" || p_type == "str" {
-                                build_print_string_vec_for_field(format!("__daikon_tmp{}", first_tmp),  
-                                                                 field_name.clone())
-                            } else {
-                                build_print_prim_vec_for_field(p_type.to_string(), format!("__daikon_tmp{}", first_tmp),
-                                                                field_name.clone())
-                            };
-                        let f1 =
-                            format!("{}\n{}\n{}\n{}\n{}\n{}",
-                                    build_dtrace_print_xfield_prologue(field_name.clone()),
-                                    build_tmp_prim_vec_for_field(first_tmp.clone(), p_type.to_string(),
-                                                                next_tmp.clone(), field_name.clone()),
-                                    // build_pointer_vec_userdef(field_name.clone()),
-                                    build_pointer_arr_userdef(field_name.clone()),
-                                    build_dtrace_print_xfield_middle(),
-                                    print_vec.clone(),
-                                    build_dtrace_print_xfield_epilogue());
-                        let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
-                        format!("{}\n{}", f1, f2)
-                    }
-                    BasicType::UserDefArray(basic_struct) => {
-                        // UNTRUSTED:
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        // We maintain that is_ref represents Vec/array args in this case.
-                        let tmp_vec =
-                            if is_ref {
-                                build_tmp_vec_for_field(first_tmp.clone(), basic_struct.to_string(),
-                                                        next_tmp.clone(), field_name.clone())
-                            } else {
-                                build_tmp_vec_for_field_ampersand(first_tmp.clone(), basic_struct.to_string(),
-                                                                  next_tmp.clone(), field_name.clone())
-                            };
-                        let f1 =
-                            format!("{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                                    build_dtrace_print_xfield_prologue(field_name.clone()),
-                                    tmp_vec.clone(),
-                                    // build_pointer_vec_userdef(field_name.clone()),
-                                    build_pointer_arr_userdef(field_name.clone()),
-                                    build_pointers_vec_userdef(basic_struct.to_string(),
-                                                            format!("__daikon_tmp{}", first_tmp), field_name.clone()),
-                                    build_dtrace_print_xfield_middle(),
-                                    build_print_vec_fields_for_field(basic_struct.to_string(),
-                                                                    format!("__daikon_tmp{}", first_tmp), field_name.clone()),
-                                    build_dtrace_print_xfield_epilogue());
-                        let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
-                        format!("{}\n{}", f1, f2)
-                    }
-                    _ => String::from("")
-                };
+                }
+                // TODO: mash:
+                //            build_dtrace_print_xfield_prologue(),
+                //            build_tmp_prim_vec_for_field(),
+                //            build_pointer_vec_userdef(),
+                //            build_dtrace_print_xfield_middle(),
+                //            build_print_prim_vec_for_field(),
+                //            build_dtrace_print_xfield_epilogue()
+                BasicType::PrimVec(p_type) => {
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let print_vec = if p_type == "String" || p_type == "str" {
+                        build_print_string_vec_for_field(
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone(),
+                        )
+                    } else {
+                        build_print_prim_vec_for_field(
+                            p_type.to_string(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone(),
+                        )
+                    };
+                    let f1 = format!(
+                        "{}\n{}\n{}\n{}\n{}\n{}",
+                        build_dtrace_print_xfield_prologue(field_name.clone()),
+                        build_tmp_prim_vec_for_field(
+                            first_tmp.clone(),
+                            p_type.to_string(),
+                            next_tmp.clone(),
+                            field_name.clone()
+                        ),
+                        build_pointer_vec_userdef(field_name.clone()),
+                        build_dtrace_print_xfield_middle(),
+                        print_vec.clone(),
+                        build_dtrace_print_xfield_epilogue()
+                    );
+                    let f2 =
+                        build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
+                    format!("{}\n{}", f1, f2)
+                }
+                // TODO: mash:
+                //            build_dtrace_print_xfield_prologue(),
+                //            build_tmp_vec_for_field(),
+                //            build_pointer_vec_userdef() (for single pointer),
+                //            build_pointers_vec_userdef() (for pointers),
+                //            build_dtrace_print_xfield_middle() (depth check),
+                //            build_print_vec_fields_for_field() (for contents),
+                //            build_dtrace_print_xfield_epilogue() (closing brace)
+                BasicType::UserDefVec(basic_struct) => {
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    // We maintain that is_ref represents Vec/array args in this case.
+                    let tmp_vec = if is_ref {
+                        build_tmp_vec_for_field(
+                            first_tmp.clone(),
+                            basic_struct.to_string(),
+                            next_tmp.clone(),
+                            field_name.clone(),
+                        )
+                    } else {
+                        build_tmp_vec_for_field_ampersand(
+                            first_tmp.clone(),
+                            basic_struct.to_string(),
+                            next_tmp.clone(),
+                            field_name.clone(),
+                        )
+                    };
+                    let f1 = format!(
+                        "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                        build_dtrace_print_xfield_prologue(field_name.clone()),
+                        tmp_vec.clone(),
+                        build_pointer_vec_userdef(field_name.clone()),
+                        build_pointers_vec_userdef(
+                            basic_struct.to_string(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone()
+                        ),
+                        build_dtrace_print_xfield_middle(),
+                        build_print_vec_fields_for_field(
+                            basic_struct.to_string(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone()
+                        ),
+                        build_dtrace_print_xfield_epilogue()
+                    );
+                    let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
+                    format!("{}\n{}", f1, f2)
+                }
+                // TODO: arrays, mighty similar to vec. Maybe you can cheat and just do the exact same thing... use | in pattern matching.
+                // Except pointer is diff, as_ptr() as usize vs as *const _ as *const () as usize...
+                BasicType::PrimArray(p_type) => {
+                    // UNTRUSTED:
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let print_vec = if p_type == "String" || p_type == "str" {
+                        build_print_string_vec_for_field(
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone(),
+                        )
+                    } else {
+                        build_print_prim_vec_for_field(
+                            p_type.to_string(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone(),
+                        )
+                    };
+                    let f1 = format!(
+                        "{}\n{}\n{}\n{}\n{}\n{}",
+                        build_dtrace_print_xfield_prologue(field_name.clone()),
+                        build_tmp_prim_vec_for_field(
+                            first_tmp.clone(),
+                            p_type.to_string(),
+                            next_tmp.clone(),
+                            field_name.clone()
+                        ),
+                        // build_pointer_vec_userdef(field_name.clone()),
+                        build_pointer_arr_userdef(field_name.clone()),
+                        build_dtrace_print_xfield_middle(),
+                        print_vec.clone(),
+                        build_dtrace_print_xfield_epilogue()
+                    );
+                    let f2 =
+                        build_print_xfield_for_vec(field_name.clone(), plain_struct.to_string());
+                    format!("{}\n{}", f1, f2)
+                }
+                BasicType::UserDefArray(basic_struct) => {
+                    // UNTRUSTED:
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    // We maintain that is_ref represents Vec/array args in this case.
+                    let tmp_vec = if is_ref {
+                        build_tmp_vec_for_field(
+                            first_tmp.clone(),
+                            basic_struct.to_string(),
+                            next_tmp.clone(),
+                            field_name.clone(),
+                        )
+                    } else {
+                        build_tmp_vec_for_field_ampersand(
+                            first_tmp.clone(),
+                            basic_struct.to_string(),
+                            next_tmp.clone(),
+                            field_name.clone(),
+                        )
+                    };
+                    let f1 = format!(
+                        "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                        build_dtrace_print_xfield_prologue(field_name.clone()),
+                        tmp_vec.clone(),
+                        // build_pointer_vec_userdef(field_name.clone()),
+                        build_pointer_arr_userdef(field_name.clone()),
+                        build_pointers_vec_userdef(
+                            basic_struct.to_string(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone()
+                        ),
+                        build_dtrace_print_xfield_middle(),
+                        build_print_vec_fields_for_field(
+                            basic_struct.to_string(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone()
+                        ),
+                        build_dtrace_print_xfield_epilogue()
+                    );
+                    let f2 = build_print_xfield_for_vec(field_name.clone(), plain_struct.clone());
+                    format!("{}\n{}", f1, f2)
+                }
+                _ => String::from(""),
+            };
 
             dtrace_print_xfields_vec.push_str(&dtrace_print_xfield);
             i += 1;
@@ -1241,7 +1400,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
         format!("impl __skip {{ {} }}", build_dtrace_print_fields_vec_noop(plain_struct))
     }
 
-    fn build_dtrace_print_fields_vec(&mut self, plain_struct: String, fields: &ThinVec<FieldDef>) -> String {
+    fn build_dtrace_print_fields_vec(
+        &mut self,
+        plain_struct: String,
+        fields: &ThinVec<FieldDef>,
+    ) -> String {
         let mut dtrace_print_fields_vec = dtrace_print_fields_vec_prologue(plain_struct.clone());
 
         let mut daikon_tmp_counter = 0;
@@ -1249,91 +1412,152 @@ impl<'a> DaikonDtraceVisitor<'a> {
         while i < fields.len() {
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
-                None => panic!("Field has no identifier")
+                None => panic!("Field has no identifier"),
             };
 
             let mut is_ref = false;
-            let dtrace_field_vec_rec =
-                match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
-                    // don't need p_type because we just call dtrace_print_xfield which handles the type.
-                    BasicType::Prim(_) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        format!("{}\n{}",
-                                build_daikon_tmp_vec_userdef(first_tmp.clone(), plain_struct.clone(), next_tmp),
-                                build_print_xfield_vec(plain_struct.clone(), field_name.clone(), format!("__daikon_tmp{}", first_tmp))
+            let dtrace_field_vec_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+                // don't need p_type because we just call dtrace_print_xfield which handles the type.
+                BasicType::Prim(_) => {
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    format!(
+                        "{}\n{}",
+                        build_daikon_tmp_vec_userdef(
+                            first_tmp.clone(),
+                            plain_struct.clone(),
+                            next_tmp
+                        ),
+                        build_print_xfield_vec(
+                            plain_struct.clone(),
+                            field_name.clone(),
+                            format!("__daikon_tmp{}", first_tmp)
                         )
-                    }
-                    // Why, oh why, are you NEVER making a Vec of the FIELD type??? That is what should go here. Need to do cases for ref or not also!
-                    // But, you don't really need to do it anywhere else but in this function, so that's nice.
-                    BasicType::UserDef(field_type) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let tmp_vec =
-                            if !is_ref {
-                                build_daikon_tmp_vec_field_userdef_ampersand(first_tmp.clone(), field_type.clone(),
-                                                                            next_tmp.clone(), field_name.clone())
-                            } else {
-                                build_daikon_tmp_vec_field_userdef(first_tmp.clone(), field_type.clone(),
-                                                                   next_tmp.clone(), field_name.clone())
-                            };
-                        format!("{}\n{}\n{}",
-                                tmp_vec,
-                                build_print_pointer_vec_userdef(field_type.clone(), format!("__daikon_tmp{}", first_tmp), field_name.clone()),
-                                build_print_vec_fields_userdef(field_type.clone(), format!("__daikon_tmp{}", first_tmp), field_name.clone()))
-                    }
-                    // call X::dtrace_print_<field>_vec since it will be implemented to only print pointers. NOT TRUSTED CODE:
-                    BasicType::PrimVec(_) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        format!("{}\n{}",
-                                build_daikon_tmp_vec_userdef(first_tmp.clone(), plain_struct.clone(), next_tmp),
-                                build_print_xfield_vec(plain_struct.clone(), field_name.clone(), format!("__daikon_tmp{}", first_tmp))
+                    )
+                }
+                // Why, oh why, are you NEVER making a Vec of the FIELD type??? That is what should go here. Need to do cases for ref or not also!
+                // But, you don't really need to do it anywhere else but in this function, so that's nice.
+                BasicType::UserDef(field_type) => {
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let tmp_vec = if !is_ref {
+                        build_daikon_tmp_vec_field_userdef_ampersand(
+                            first_tmp.clone(),
+                            field_type.clone(),
+                            next_tmp.clone(),
+                            field_name.clone(),
                         )
-                    }
-                    BasicType::UserDefVec(_) => {
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        format!("{}\n{}",
-                                build_daikon_tmp_vec_userdef(first_tmp.clone(), plain_struct.clone(), next_tmp),
-                                build_print_xfield_vec(plain_struct.clone(), field_name.clone(), format!("__daikon_tmp{}", first_tmp))
+                    } else {
+                        build_daikon_tmp_vec_field_userdef(
+                            first_tmp.clone(),
+                            field_type.clone(),
+                            next_tmp.clone(),
+                            field_name.clone(),
                         )
-                    }
-                    BasicType::PrimArray(_) => {
-                        // UNTRUSTED: is this exactly the same?
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        format!("{}\n{}",
-                                build_daikon_tmp_vec_userdef(first_tmp.clone(), plain_struct.clone(), next_tmp),
-                                build_print_xfield_vec(plain_struct.clone(), field_name.clone(), format!("__daikon_tmp{}", first_tmp))
+                    };
+                    format!(
+                        "{}\n{}\n{}",
+                        tmp_vec,
+                        build_print_pointer_vec_userdef(
+                            field_type.clone(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone()
+                        ),
+                        build_print_vec_fields_userdef(
+                            field_type.clone(),
+                            format!("__daikon_tmp{}", first_tmp),
+                            field_name.clone()
                         )
-                    }
-                    BasicType::UserDefArray(_) => {
-                        // UNTRUSTED: is this exactly the same?
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        daikon_tmp_counter += 1;
-                        format!("{}\n{}",
-                                build_daikon_tmp_vec_userdef(first_tmp.clone(), plain_struct.clone(), next_tmp),
-                                build_print_xfield_vec(plain_struct.clone(), field_name.clone(), format!("__daikon_tmp{}", first_tmp))
+                    )
+                }
+                // call X::dtrace_print_<field>_vec since it will be implemented to only print pointers. NOT TRUSTED CODE:
+                BasicType::PrimVec(_) => {
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    format!(
+                        "{}\n{}",
+                        build_daikon_tmp_vec_userdef(
+                            first_tmp.clone(),
+                            plain_struct.clone(),
+                            next_tmp
+                        ),
+                        build_print_xfield_vec(
+                            plain_struct.clone(),
+                            field_name.clone(),
+                            format!("__daikon_tmp{}", first_tmp)
                         )
-                    }
-                    BasicType::NoRet => { String::from("") }
-                    BasicType::Error => panic!("Field type not handled")
-                };
+                    )
+                }
+                BasicType::UserDefVec(_) => {
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    format!(
+                        "{}\n{}",
+                        build_daikon_tmp_vec_userdef(
+                            first_tmp.clone(),
+                            plain_struct.clone(),
+                            next_tmp
+                        ),
+                        build_print_xfield_vec(
+                            plain_struct.clone(),
+                            field_name.clone(),
+                            format!("__daikon_tmp{}", first_tmp)
+                        )
+                    )
+                }
+                BasicType::PrimArray(_) => {
+                    // UNTRUSTED: is this exactly the same?
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    format!(
+                        "{}\n{}",
+                        build_daikon_tmp_vec_userdef(
+                            first_tmp.clone(),
+                            plain_struct.clone(),
+                            next_tmp
+                        ),
+                        build_print_xfield_vec(
+                            plain_struct.clone(),
+                            field_name.clone(),
+                            format!("__daikon_tmp{}", first_tmp)
+                        )
+                    )
+                }
+                BasicType::UserDefArray(_) => {
+                    // UNTRUSTED: is this exactly the same?
+                    let first_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    let next_tmp = daikon_tmp_counter.to_string();
+                    daikon_tmp_counter += 1;
+                    format!(
+                        "{}\n{}",
+                        build_daikon_tmp_vec_userdef(
+                            first_tmp.clone(),
+                            plain_struct.clone(),
+                            next_tmp
+                        ),
+                        build_print_xfield_vec(
+                            plain_struct.clone(),
+                            field_name.clone(),
+                            format!("__daikon_tmp{}", first_tmp)
+                        )
+                    )
+                }
+                BasicType::NoRet => String::from(""),
+                BasicType::Error => panic!("Field type not handled"),
+            };
             // dtrace_field_vec_rec.push_str("\n"); // I don't think any newlines or formatting matters to the parser,
-                                                 // and the pretty printer does what it wantsfor that.
+            // and the pretty printer does what it wantsfor that.
 
             dtrace_print_fields_vec.push_str(&dtrace_field_vec_rec); // don't think a newline here would matter
             i += 1;
@@ -1360,54 +1584,50 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
             let field_name = match &fields[i].ident {
                 Some(field_ident) => String::from(field_ident.as_str()),
-                None => panic!("Field has no identifier")
+                None => panic!("Field has no identifier"),
             };
 
             let mut is_ref = false;
-            let mut dtrace_field_rec =
-                match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
-                    BasicType::Prim(p_type) => {
-                        if p_type == "String" || p_type == "str" { // TODO: put string values in quotes
-                            build_prim_field_tostring(field_name.clone())
-                        } else if is_ref {
-                            build_field_prim_ref(p_type.clone(), field_name.clone())
-                        } else {
-                            build_field_prim(p_type.clone(), field_name.clone())
-                        }
-                        // if !is_ref && p_type == "String" {
-                        //     build_field_prim_with_clone_access(p_type.clone(), field_name.clone())
-                        // } else if is_ref && p_type != "String" {
-                        //     // pointer
-                        //     build_plain_pointer_field(field_name.clone())
-                        // } else {
-                        //     build_field_prim(p_type.clone(), field_name.clone())
-                        // }
+            let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
+                BasicType::Prim(p_type) => {
+                    if p_type == "String" || p_type == "str" {
+                        // TODO: put string values in quotes
+                        build_prim_field_tostring(field_name.clone())
+                    } else if is_ref {
+                        build_field_prim_ref(p_type.clone(), field_name.clone())
+                    } else {
+                        build_field_prim(p_type.clone(), field_name.clone())
                     }
-                    BasicType::UserDef(_) => {
-                        if !is_ref {
-                            build_field_userdef_with_ampersand_access(field_name.clone())
-                        } else {
-                            build_field_userdef(field_name.clone())
-                        }
+                    // if !is_ref && p_type == "String" {
+                    //     build_field_prim_with_clone_access(p_type.clone(), field_name.clone())
+                    // } else if is_ref && p_type != "String" {
+                    //     // pointer
+                    //     build_plain_pointer_field(field_name.clone())
+                    // } else {
+                    //     build_field_prim(p_type.clone(), field_name.clone())
+                    // }
+                }
+                BasicType::UserDef(_) => {
+                    if !is_ref {
+                        build_field_userdef_with_ampersand_access(field_name.clone())
+                    } else {
+                        build_field_userdef(field_name.clone())
                     }
-                    // TODO: use the | here.
-                    BasicType::PrimVec(_) => {
-                        build_call_print_field(field_name.clone())
-                    }
-                    BasicType::UserDefVec(_) => {
-                        build_call_print_field(field_name.clone())
-                    }
-                    BasicType::PrimArray(_p_type) => {
-                        // UNTRUSTED:
-                        build_call_print_field(field_name.clone())
-                    }
-                    BasicType::UserDefArray(_) => {
-                        // UNTRUSTED:
-                        build_call_print_field(field_name.clone())
-                    }
-                    BasicType::NoRet => { String::from("") }
-                    BasicType::Error => panic!("Field type not handled")
-                };
+                }
+                // TODO: use the | here.
+                BasicType::PrimVec(_) => build_call_print_field(field_name.clone()),
+                BasicType::UserDefVec(_) => build_call_print_field(field_name.clone()),
+                BasicType::PrimArray(_p_type) => {
+                    // UNTRUSTED:
+                    build_call_print_field(field_name.clone())
+                }
+                BasicType::UserDefArray(_) => {
+                    // UNTRUSTED:
+                    build_call_print_field(field_name.clone())
+                }
+                BasicType::NoRet => String::from(""),
+                BasicType::Error => panic!("Field type not handled"),
+            };
             dtrace_field_rec.push_str("\n");
 
             dtrace_print_fields.push_str(&format!("{}{}", dtrace_field_rec, "\n"));
@@ -1430,127 +1650,184 @@ impl<'a> DaikonDtraceVisitor<'a> {
         binding and grokking the return expression to catch.
     */
     fn grok_fn_sig(&mut self, decl: &P<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
-
         // grok params
         let mut i = 0;
         let mut dtrace_param_blocks: Vec<String> = Vec::new();
         while i < decl.inputs.len() {
-
             let mut is_ref = false;
-            let mut dtrace_rec =
-                if get_param_ident(&decl.inputs[i].pat) == "self" {
-                    // println!("hi self!");
-                    build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
-                } else {
-                    match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
-                        BasicType::Prim(p_type) => {
-                            if p_type == "String" || p_type == "str" { // TODO: put quotes around String values
-                                build_prim_with_tostring(get_param_ident(&decl.inputs[i].pat))
-                            } else if is_ref {
-                                build_prim_ref(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
-                            } else {
-                                build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
-                            }
+            let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
+                // println!("hi self!");
+                build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
+            } else {
+                match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
+                    BasicType::Prim(p_type) => {
+                        if p_type == "String" || p_type == "str" {
+                            // TODO: put quotes around String values
+                            build_prim_with_tostring(get_param_ident(&decl.inputs[i].pat))
+                        } else if is_ref {
+                            build_prim_ref(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
+                        } else {
+                            build_prim(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
                         }
-                        BasicType::UserDef(_) => {
-                            if !is_ref {
-                                build_userdef_with_ampersand_access(get_param_ident(&decl.inputs[i].pat),
-                                                                    3 /* depth_arg  */)
-                            } else {
-                                build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
-                            }
-                        }
-                        // TODO: build __daikon_tmp_vec<some counter> and build_print_prim_vec().
-                        BasicType::PrimVec(p_type) => {
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let print_vec =
-                                if p_type == "String" || p_type == "str" {
-                                    build_print_string_vec(format!("__daikon_tmp{}", first_tmp),
-                                                        get_param_ident(&decl.inputs[i].pat))
-                                } else {
-                                    build_print_prim_vec(p_type.clone(), format!("__daikon_tmp{}", first_tmp),
-                                        get_param_ident(&decl.inputs[i].pat))
-                                };
-                            format!("{}\n{}\n{}",
-                                    build_tmp_vec_prim(first_tmp.clone(), p_type.to_string(), next_tmp.clone(),
-                                        get_param_ident(&decl.inputs[i].pat)),
-                                    build_pointer_vec(get_param_ident(&decl.inputs[i].pat)),
-                                    print_vec.clone())
-                        }
-                        // TODO: build __daikon_tmp_vec<some counter> and:
-                        //      build_pointer_vec(), (to print the single pointer value)
-                        //      build_print_pointer_vec(), (to print top-level pointers for everyone)
-                        //      build_print_vec_fields(), (to print contents)
-                        BasicType::UserDefVec(basic_type) => {
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let var_name = get_param_ident(&decl.inputs[i].pat);
-                            // We maintain that is_ref represents Vec/array argument in this case.
-                            let tmp_vec =
-                                if is_ref {
-                                    build_daikon_tmp_vec(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                                        var_name.clone())
-                                } else {
-                                    build_daikon_tmp_vec_ampersand(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                                                var_name.clone())
-                                };
-                            let res = format!("{}\n{}\n{}\n{}",
-                                    tmp_vec.clone(),
-                                    build_pointer_vec(var_name.clone()),
-                                    build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()),
-                                    build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()));
-                            res
-                        }
-                        BasicType::PrimArray(p_type) => {
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let print_vec =
-                                if p_type == "String" || p_type == "str" {
-                                    build_print_string_vec(format!("__daikon_tmp{}", first_tmp),
-                                                        get_param_ident(&decl.inputs[i].pat))
-                                } else {
-                                    build_print_prim_vec(p_type.clone(), format!("__daikon_tmp{}", first_tmp),
-                                        get_param_ident(&decl.inputs[i].pat))
-                                };
-                            format!("{}\n{}\n{}",
-                                    build_tmp_vec_prim(first_tmp.clone(), p_type.to_string(), next_tmp.clone(),
-                                        get_param_ident(&decl.inputs[i].pat)),
-                                    build_pointer_arr(get_param_ident(&decl.inputs[i].pat)),
-                                    print_vec.clone())
-                        }
-                        BasicType::UserDefArray(basic_type) => {
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let var_name = get_param_ident(&decl.inputs[i].pat);
-                            // We maintain that is_ref represents Vec/array argument in this case.
-                            let tmp_vec =
-                                if is_ref {
-                                    build_daikon_tmp_vec(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                                        var_name.clone())
-                                } else {
-                                    build_daikon_tmp_vec_ampersand(first_tmp.clone(), basic_type.to_string(), next_tmp.clone(),
-                                                                var_name.clone())
-                                };
-                            let res = format!("{}\n{}\n{}\n{}",
-                                    tmp_vec.clone(),
-                                    build_pointer_arr(var_name.clone()),
-                                    build_print_pointer_vec(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()),
-                                    build_print_vec_fields(basic_type.to_string(), format!("__daikon_tmp{}", first_tmp), var_name.clone()));
-                            res
-                        }
-                        BasicType::NoRet => { String::from("") }
-                        BasicType::Error => panic!("Formal arg type not handled."),
                     }
-                };
+                    BasicType::UserDef(_) => {
+                        if !is_ref {
+                            build_userdef_with_ampersand_access(
+                                get_param_ident(&decl.inputs[i].pat),
+                                3, /* depth_arg  */
+                            )
+                        } else {
+                            build_userdef(
+                                get_param_ident(&decl.inputs[i].pat),
+                                3, /* depth_arg  */
+                            )
+                        }
+                    }
+                    // TODO: build __daikon_tmp_vec<some counter> and build_print_prim_vec().
+                    BasicType::PrimVec(p_type) => {
+                        let first_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let next_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let print_vec = if p_type == "String" || p_type == "str" {
+                            build_print_string_vec(
+                                format!("__daikon_tmp{}", first_tmp),
+                                get_param_ident(&decl.inputs[i].pat),
+                            )
+                        } else {
+                            build_print_prim_vec(
+                                p_type.clone(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                get_param_ident(&decl.inputs[i].pat),
+                            )
+                        };
+                        format!(
+                            "{}\n{}\n{}",
+                            build_tmp_vec_prim(
+                                first_tmp.clone(),
+                                p_type.to_string(),
+                                next_tmp.clone(),
+                                get_param_ident(&decl.inputs[i].pat)
+                            ),
+                            build_pointer_vec(get_param_ident(&decl.inputs[i].pat)),
+                            print_vec.clone()
+                        )
+                    }
+                    // TODO: build __daikon_tmp_vec<some counter> and:
+                    //      build_pointer_vec(), (to print the single pointer value)
+                    //      build_print_pointer_vec(), (to print top-level pointers for everyone)
+                    //      build_print_vec_fields(), (to print contents)
+                    BasicType::UserDefVec(basic_type) => {
+                        let first_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let next_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let var_name = get_param_ident(&decl.inputs[i].pat);
+                        // We maintain that is_ref represents Vec/array argument in this case.
+                        let tmp_vec = if is_ref {
+                            build_daikon_tmp_vec(
+                                first_tmp.clone(),
+                                basic_type.to_string(),
+                                next_tmp.clone(),
+                                var_name.clone(),
+                            )
+                        } else {
+                            build_daikon_tmp_vec_ampersand(
+                                first_tmp.clone(),
+                                basic_type.to_string(),
+                                next_tmp.clone(),
+                                var_name.clone(),
+                            )
+                        };
+                        let res = format!(
+                            "{}\n{}\n{}\n{}",
+                            tmp_vec.clone(),
+                            build_pointer_vec(var_name.clone()),
+                            build_print_pointer_vec(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                var_name.clone()
+                            ),
+                            build_print_vec_fields(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                var_name.clone()
+                            )
+                        );
+                        res
+                    }
+                    BasicType::PrimArray(p_type) => {
+                        let first_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let next_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let print_vec = if p_type == "String" || p_type == "str" {
+                            build_print_string_vec(
+                                format!("__daikon_tmp{}", first_tmp),
+                                get_param_ident(&decl.inputs[i].pat),
+                            )
+                        } else {
+                            build_print_prim_vec(
+                                p_type.clone(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                get_param_ident(&decl.inputs[i].pat),
+                            )
+                        };
+                        format!(
+                            "{}\n{}\n{}",
+                            build_tmp_vec_prim(
+                                first_tmp.clone(),
+                                p_type.to_string(),
+                                next_tmp.clone(),
+                                get_param_ident(&decl.inputs[i].pat)
+                            ),
+                            build_pointer_arr(get_param_ident(&decl.inputs[i].pat)),
+                            print_vec.clone()
+                        )
+                    }
+                    BasicType::UserDefArray(basic_type) => {
+                        let first_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let next_tmp = daikon_tmp_counter.to_string();
+                        *daikon_tmp_counter += 1;
+                        let var_name = get_param_ident(&decl.inputs[i].pat);
+                        // We maintain that is_ref represents Vec/array argument in this case.
+                        let tmp_vec = if is_ref {
+                            build_daikon_tmp_vec(
+                                first_tmp.clone(),
+                                basic_type.to_string(),
+                                next_tmp.clone(),
+                                var_name.clone(),
+                            )
+                        } else {
+                            build_daikon_tmp_vec_ampersand(
+                                first_tmp.clone(),
+                                basic_type.to_string(),
+                                next_tmp.clone(),
+                                var_name.clone(),
+                            )
+                        };
+                        let res = format!(
+                            "{}\n{}\n{}\n{}",
+                            tmp_vec.clone(),
+                            build_pointer_arr(var_name.clone()),
+                            build_print_pointer_vec(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                var_name.clone()
+                            ),
+                            build_print_vec_fields(
+                                basic_type.to_string(),
+                                format!("__daikon_tmp{}", first_tmp),
+                                var_name.clone()
+                            )
+                        );
+                        res
+                    }
+                    BasicType::NoRet => String::from(""),
+                    BasicType::Error => panic!("Formal arg type not handled."),
+                }
+            };
             dtrace_rec.push_str("\n");
 
             dtrace_param_blocks.push(format!("{}{}", dtrace_rec, "\n"));
@@ -1562,26 +1839,31 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     #[allow(rustc::default_hash_types)]
-    fn grok_block(&mut self,
-                  ppt_name: String,
-                  body: &mut P<Block>,
-                  dtrace_param_blocks: &mut Vec<String>,
-                  param_to_block_idx: &HashMap<String, i32>,
-                  ret_ty: &FnRetTy,
-                  exit_counter: &mut usize,
-                  daikon_tmp_counter: &mut u32) {
+    fn grok_block(
+        &mut self,
+        ppt_name: String,
+        body: &mut P<Block>,
+        dtrace_param_blocks: &mut Vec<String>,
+        param_to_block_idx: &HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+        exit_counter: &mut usize,
+        daikon_tmp_counter: &mut u32,
+    ) {
         let mut i = 0;
 
         // assuming no unreachable statements.
-        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
-            i = self.grok_stmt(i,
-                               body,
-                               exit_counter,
-                               ppt_name.clone(),
-                               dtrace_param_blocks,
-                               &param_to_block_idx,
-                               &ret_ty,
-                               daikon_tmp_counter); // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
+        while i < body.stmts.len() {
+            // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(
+                i,
+                body,
+                exit_counter,
+                ppt_name.clone(),
+                dtrace_param_blocks,
+                &param_to_block_idx,
+                &ret_ty,
+                daikon_tmp_counter,
+            ); // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
         }
     }
 
@@ -1596,13 +1878,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
     // this code being messed up is independent from the dtrace_param_blocks being messed up.
     // Make sure you know what's broken
     #[allow(rustc::default_hash_types)]
-    fn grok_fn_body(&mut self,
-                    ppt_name: String,
-                    body: &mut P<Block>,
-                    dtrace_param_blocks: &mut Vec<String>,
-                    param_to_block_idx: HashMap<String, i32>,
-                    ret_ty: &FnRetTy,
-                    daikon_tmp_counter: &mut u32) {
+    fn grok_fn_body(
+        &mut self,
+        ppt_name: String,
+        body: &mut P<Block>,
+        dtrace_param_blocks: &mut Vec<String>,
+        param_to_block_idx: HashMap<String, i32>,
+        ret_ty: &FnRetTy,
+        daikon_tmp_counter: &mut u32,
+    ) {
         //let original_len = body.stmts.len();
         let mut i = 0;
 
@@ -1639,17 +1923,19 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut exit_counter = 1;
 
         // assuming no unreachable statements.
-        while i < body.stmts.len() { // make sure loop bound is growing as we insert stmts
-            i = self.grok_stmt(i,
-                               body,
-                               &mut exit_counter,
-                               ppt_name.clone(),
-                               dtrace_param_blocks,
-                               &param_to_block_idx,
-                               &ret_ty,
-                               daikon_tmp_counter) // match on Semi mainly for now, find return <expr>; and add an exit point.
+        while i < body.stmts.len() {
+            // make sure loop bound is growing as we insert stmts
+            i = self.grok_stmt(
+                i,
+                body,
+                &mut exit_counter,
+                ppt_name.clone(),
+                dtrace_param_blocks,
+                &param_to_block_idx,
+                &ret_ty,
+                daikon_tmp_counter,
+            ) // match on Semi mainly for now, find return <expr>; and add an exit point.
         }
-
     }
 }
 
@@ -1691,7 +1977,8 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 // }
                 let mut daikon_tmp_counter = 0;
                 // get block of dtrace chunks -- one for each param
-                let mut dtrace_param_blocks = self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
+                let mut dtrace_param_blocks =
+                    self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
                 let param_to_block_idx = map_params(&f.sig.decl);
                 // let mut is_ref = false;
                 // let ret_ty = match &f.sig.decl.output {
@@ -1704,12 +1991,14 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                         // add a dtrace_entry record in grok_fn_body, and
                         // make sure to separately pass in the calls generated
                         // by grok_fn_sig
-                        self.grok_fn_body(ppt_name.clone(),
-                                          body,
-                                          &mut dtrace_param_blocks,
-                                          param_to_block_idx,
-                                          &f.sig.decl.output,
-                                          &mut daikon_tmp_counter);
+                        self.grok_fn_body(
+                            ppt_name.clone(),
+                            body,
+                            &mut dtrace_param_blocks,
+                            param_to_block_idx,
+                            &f.sig.decl.output,
+                            &mut daikon_tmp_counter,
+                        );
                     }
                 }
             }
@@ -1743,12 +2032,12 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                         while i < generics.params.len() {
                             match &generics.params[i].kind {
                                 GenericParamKind::Lifetime => {
-                                    the_args.push(AngleBracketedArg::Arg(
-                                        GenericArg::Lifetime(Lifetime {
+                                    the_args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
+                                        Lifetime {
                                             id: NodeId::MAX_AS_U32.into(),
                                             ident: generics.params[i].ident.clone(),
-                                        })
-                                    ));
+                                        },
+                                    )));
                                 }
                                 GenericParamKind::Type { default: _ } => {
                                     panic!("Enum has type generic arg.")
@@ -1759,11 +2048,10 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                             }
                             i += 1;
                         }
-                        let angle_bracketed_args = AngleBracketedArgs {
-                            span: item.span.clone(),
-                            args: the_args,
-                        };
-                        the_path.segments[0].args = Some(Box::new(GenericArgs::AngleBracketed(angle_bracketed_args)));
+                        let angle_bracketed_args =
+                            AngleBracketedArgs { span: item.span.clone(), args: the_args };
+                        the_path.segments[0].args =
+                            Some(Box::new(GenericArgs::AngleBracketed(angle_bracketed_args)));
                         // TODO: generate the same but noop
                         let the_ty = Ty {
                             id: NodeId::MAX_AS_U32.into(),
@@ -1791,13 +2079,11 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
 impl<'a> DaikonNoopVisitor<'a> {
     // Copied from above.
     #[allow(dead_code)]
-    fn gen_impl_noop(&mut self,
-                     pp_struct: &String,
-                     struct_generics: &Generics) {
+    fn gen_impl_noop(&mut self, pp_struct: &String, struct_generics: &Generics) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
             ItemKind::Impl(i) => i,
-            _ => panic!("Base impl is not impl")
+            _ => panic!("Base impl is not impl"),
         };
 
         if pp_struct.contains(":") {
@@ -1812,19 +2098,18 @@ impl<'a> DaikonNoopVisitor<'a> {
 
         let struct_as_ret = build_phony_ret(spliced_struct.clone());
         println!("as ret: {}", struct_as_ret);
-        the_impl.self_ty =
-            match &self.parser.parse_items_from_string(struct_as_ret.clone()) {
-                Err(_why) => {
-                    panic!("Parsing phony arg failed");
-                }
-                Ok(arg_items) => match &arg_items[0].kind {
-                    ItemKind::Fn(phony) => match &phony.sig.decl.output {
-                        FnRetTy::Ty(ty) => ty.clone(),
-                        _ => panic!("Phony ret is none")
-                    }
-                    _ => panic!("Parsing phony fn failed")
-                }
-            };
+        the_impl.self_ty = match &self.parser.parse_items_from_string(struct_as_ret.clone()) {
+            Err(_why) => {
+                panic!("Parsing phony arg failed");
+            }
+            Ok(arg_items) => match &arg_items[0].kind {
+                ItemKind::Fn(phony) => match &phony.sig.decl.output {
+                    FnRetTy::Ty(ty) => ty.clone(),
+                    _ => panic!("Phony ret is none"),
+                },
+                _ => panic!("Parsing phony fn failed"),
+            },
+        };
         // the_impl.self_ty = Box::new(ty.clone()); :(
         the_impl.generics = struct_generics.clone();
 
@@ -1836,8 +2121,8 @@ impl<'a> DaikonNoopVisitor<'a> {
                 ItemKind::Impl(tmp_impl) => {
                     the_impl.items.push(tmp_impl.items[0].clone());
                 }
-                _ => panic!("Expected impl for noop 1")
-            }
+                _ => panic!("Expected impl for noop 1"),
+            },
         }
 
         // let plain_struct =
@@ -1853,8 +2138,8 @@ impl<'a> DaikonNoopVisitor<'a> {
                 ItemKind::Impl(tmp_impl) => {
                     the_impl.items.push(tmp_impl.items[0].clone());
                 }
-                _ => panic!("Expected phony impl 2")
-            }
+                _ => panic!("Expected phony impl 2"),
+            },
         }
 
         self.mod_items.push(impl_item.clone());
@@ -1878,7 +2163,7 @@ impl<'a> DaikonNoopVisitor<'a> {
         let base_impl_item = self.parser.parse_items_from_string(base_impl);
         match &base_impl_item {
             Err(_why) => panic!("Parsing base impl failed"),
-            Ok(base_impl_item) => base_impl_item[0].clone()
+            Ok(base_impl_item) => base_impl_item[0].clone(),
         }
     }
 }
@@ -1895,11 +2180,15 @@ impl<'a> MutVisitor for DaikonNoopVisitor<'a> {
         let mut lines = much_struct.lines();
         let mut get_struct = much_struct.clone();
         while let Some(next) = lines.next() {
-            if next.starts_with("pub") || next.starts_with("struct") || next.starts_with("enum") || next.starts_with("union") {
+            if next.starts_with("pub")
+                || next.starts_with("struct")
+                || next.starts_with("enum")
+                || next.starts_with("union")
+            {
                 get_struct = String::from(next);
                 break;
             }
-        };
+        }
         // println!("now is: {}", get_struct);
 
         match &mut item.kind {
@@ -2133,7 +2422,6 @@ impl<'a> Parser<'a> {
         //== Daikon dtrace instrumentation passes ==//
 
         if *DO_VISITOR.lock().unwrap() {
-
             // do all mutation things
             let mut items_to_append: ThinVec<P<Item>> = ThinVec::new();
             let mut impl_inserter =
@@ -2144,7 +2432,8 @@ impl<'a> Parser<'a> {
             let pp_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".pp");
             let pp_as_path = std::path::Path::new(&pp_path);
             std::fs::File::create(&pp_as_path).unwrap();
-            let mut pp = std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
+            let mut pp =
+                std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
             let mut i = 0;
             while i < items.len() - 1 {
                 writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
@@ -2176,8 +2465,8 @@ impl<'a> Parser<'a> {
                 items.push(items_to_append[i].clone());
                 i += 1;
             }
-
-        } else if do_noop { // TODO: remove this an implement a first pass with a /tmp file (or equivalent for Windows)
+        } else if do_noop {
+            // TODO: remove this an implement a first pass with a /tmp file (or equivalent for Windows)
             println!("hullo.");
             let mut items_to_append: ThinVec<P<Item>> = ThinVec::new();
 
