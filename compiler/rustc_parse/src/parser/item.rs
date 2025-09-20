@@ -57,27 +57,44 @@ use super::{
 use crate::errors::{self, FnPointerCannotBeAsync, FnPointerCannotBeConst, MacroExpandsToAdtField};
 use crate::{exp, fluent_generated as fluent, new_parser_from_source_str};
 
+// Stores the output prefix
+// E.g., foo.rs -> foo, or the name of the cargo project.
+pub static OUTPUT_NAME: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
+
+// True if we are not bootstrapping the standard library.
+pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+
+// For generating unique names for auxiliary files to parse in parse_items_from_string.
+static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
+
 /*
-   Visitor for defining struct-specific routines
+   Primary visitor pass for dtrace instrumentation.
 */
 struct DaikonDtraceVisitor<'a> {
     // For parsing string fragments
     pub parser: &'a Parser<'a>,
 
-    // For appending impl blocks to the file (tested, works to push to items in parse_mod)
+    // For appending impl blocks to the file
     pub mod_items: &'a mut ThinVec<P<Item>>,
 }
 
-/*
-    Visitor for instrumenting the standard library
-*/
-#[allow(dead_code)]
-struct DaikonNoopVisitor<'a> {
-    pub parser: &'a Parser<'a>,
-    pub mod_items: &'a mut ThinVec<P<Item>>,
-}
-
-// TODO: add String payloads to UserDefVec & UserDefArray so you can call X::dtrace_print_fields() on a param with type X.
+// Represents a coarse-grained breakdown of any Rust type.
+// Information about references is handled in get_basic_type.
+// E.g.,
+// i32 -> Prim("i32")
+// Vec<char> -> PrimVec("char")
+// &'a Vec<X> -> UserDefVec("X")
+// &[String] -> PrimArray("String")
+// &'a &'b Widget -> UserDef("Widget")
+// All enums, structs, and unions are categorized as UserDef,
+// so we cannot distinguish between them after this point,
+// and this forces us to implement noop dtrace routines
+// for them.
+// This can be fixed by doing a first pass to filter only
+// structs which belong to the crate being compiled. Then
+// we can appeal to a /tmp file at compile-time and skip
+// enums, unions, and all UserDef types from outside the
+// crate.
 #[derive(PartialEq)]
 enum BasicType {
     Prim(String),
@@ -90,6 +107,8 @@ enum BasicType {
     Error,
 }
 
+// Given a pattern pat from a function signature representing a parameter name,
+// return the argument name in a String.
 fn get_param_ident(pat: &P<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
@@ -97,6 +116,11 @@ fn get_param_ident(pat: &P<Pat>) -> String {
     }
 }
 
+// Given a reduced type String (i.e., no references or junk in front),
+// check if the type String is a primitive (i32, u32, String, etc.)
+// and return a BasicType representing it or BasicType::Error otherwise.
+// i32 -> BasicType::Prim("i32")
+// Vec<X> -> BasicType::Error
 fn check_prim(ty_str: &str) -> BasicType {
     if ty_str == I8 {
         return BasicType::Prim(String::from(I8));
@@ -142,7 +166,9 @@ fn check_prim(ty_str: &str) -> BasicType {
 
 // is Vec with > 1 arg meaningful?
 fn grok_vec_args(path: &Path, is_ref: &mut bool) -> BasicType {
-    // Reset in case we have an &Vec<...>
+    // Reset in case we have an &Vec<X>, since we want to know if
+    // the Vec arguments are references are not, i.e., Vec<X> vs.
+    // Vec<&X>.
     *is_ref = false;
     match &path.segments[path.segments.len() - 1].args {
         None => BasicType::Error,
@@ -165,7 +191,12 @@ fn grok_vec_args(path: &Path, is_ref: &mut bool) -> BasicType {
     }
 }
 
-// TODO: still don't know when lifetimes are needed for the tmp vecs
+// Used to reduce a String like X<a, b> to X.
+// Not necessary in any cases I have found, but it is
+// used to make calls like
+// X::dtrace_print_... rather than
+// X<a, b>::dtrace_print...
+// For Vec<X>.
 fn cut_lifetimes(spliced_struct: String) -> String {
     let mut res = String::from("");
     let mut i = 0;
@@ -179,6 +210,10 @@ fn cut_lifetimes(spliced_struct: String) -> String {
     res
 }
 
+// If there is no output file specified with -o and we have not
+// been invoked by cargo, take the OUTPUT_NAME from the input file
+// name.
+// foo.rs -> foo
 pub fn jot_output_name(s: String) {
     let end = match s.rfind(".") {
         // .rs
@@ -198,6 +233,31 @@ pub fn jot_output_name(s: String) {
     *OUTPUT_NAME.lock().unwrap() = res;
 }
 
+// Hack.
+// Given a pretty-printed struct:
+// struct X<a, b> {
+// ...
+// }
+// Splice the name X<a, b> from this String. This is the only way
+// I have found to take a struct Item and obtain its identifier
+// including generics in a String.
+// The identifier plus generics are required to synthesize impl blocks
+// with dtrace routines:
+// impl X<a, b> {
+//     dtrace_print_fields(self, ...)
+// }
+// This method is broken in many cases. Pretty-printing can include triple-bar
+// comments or attributes.
+// Indeed, the pretty-printed String could be as bad as:
+/*
+
+/// This is an awesome struct
+#[cfg(test)]
+struct X<a, b> {
+    ...
+}
+
+*/
 fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
     let start_idx = pp_struct.find(" ");
     match &start_idx {
@@ -216,8 +276,8 @@ fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
                         res.push_str(&String::from(pp_struct.chars().nth(i).unwrap()));
                         i += 1;
                     }
+                    // don't forget pub struct
                     if res.starts_with("struct") {
-                        // forgot pub struct ...
                         return res[7..].to_string();
                     } else if res.starts_with("enum") {
                         return res[5..].to_string();
@@ -231,6 +291,8 @@ fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
     }
 }
 
+// Given a Rust type, break it down into something that fits into
+// BasicType. If it is a reference, note this with is_ref.
 fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
     match &kind {
         TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
@@ -268,6 +330,12 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
     }
 }
 
+// Heretofore unused. This was intended to allow easy invalidation
+// of parameters. E.g., if parameter x was invalidated with
+// drop(x), we need to know which idx it belongs to in our
+// Vec of dtrace information to avoid logging it at future
+// exit ppts.
+// Parameter invalidation is still unimplemented.
 #[allow(rustc::default_hash_types)]
 fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
     let mut res = HashMap::new();
@@ -279,6 +347,15 @@ fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
+// Used to check if the last statement in each function is an
+// explicit void return. If it is not, an explicit void return
+// is added at the end to make it easy to identify the final
+// exit ppt.
+// This does not detect something like
+/*
+if cond { return; } else { return; }
+*/
+// In this case, an extra void return is unreachable.
 fn last_stmt_is_void_return(block: &P<Block>) -> bool {
     if block.stmts.len() == 0 {
         panic!("no stmts to check");
@@ -293,6 +370,8 @@ fn last_stmt_is_void_return(block: &P<Block>) -> bool {
 }
 
 impl<'a> DaikonDtraceVisitor<'a> {
+    // Given a block of stmts in a String and a block, parse the stmts
+    // into a Vec<Item>, and append all stmts to the block.
     fn append_to_block(&self, stuff: String, block: &mut P<Block>) {
         match &self.parser.parse_items_from_string(stuff.clone()) {
             Err(_why) => panic!("Parsing internal String failed"),
@@ -310,6 +389,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
+    // Given a block of stmts in a String, a block, and an idx into the block,
+    // parse the stmts into a Vec<Item>, and insert all stmts at the specified index.
     fn insert_into_block(&self, loc: usize, stuff: String, block: &mut P<Block>) -> usize {
         let mut i = loc;
         let items = self.parser.parse_items_from_string(stuff.clone());
@@ -331,6 +412,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
         i
     }
 
+    // Take an if stmt and use invariants about if stmts
+    // to walk all blocks and locate exit ppts.
+    // expr: If expression
+    // exit_counter: gives the previously seen number of exit ppts
+    // ppt_name: ppt name
+    // dtrace_param_blocks: Vec of String blocks, with the ith block
+    // giving the dtrace calls needed to log the ith parameter.
+    // param_to_block_idx: map of param identifiers to idx into
+    // dtrace_param_blocks
+    // ret_ty: return type of the function
+    // daikon_tmp_counter: gives the number of previously allocated
+    // temporaries added into the code.
     #[allow(rustc::default_hash_types)]
     fn grok_expr_for_if(
         &mut self,
@@ -404,7 +497,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) -> usize {
         let mut i = loc;
         let stmt = body.stmts[i].clone();
-        // println!("{}\n\n", pprust::stmt_to_string(&stmt));
         match &mut body.stmts[i].kind {
             StmtKind::Let(_local) => {
                 return i + 1;
@@ -1574,12 +1666,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // generate calls to put in dtrace_print_fields, maybe also dtrace_print_fields_vec at the same time.
     // fn grok_struct_fields(&mut self, /* some vec with field info */) { }
+    // Given a struct's field declarations, generate the function dtrace_print_fields(self)
+    // to be added to the synthesized impl block.
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
         let mut dtrace_print_fields: String = dtrace_print_fields_prologue();
 
         let mut i = 0;
         while i < fields.len() {
-            // make pub
+            // Make all fields public for access in dtrace routines
             fields[i].vis.kind = VisibilityKind::Public;
 
             let field_name = match &fields[i].ident {
@@ -1598,14 +1692,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     } else {
                         build_field_prim(p_type.clone(), field_name.clone())
                     }
-                    // if !is_ref && p_type == "String" {
-                    //     build_field_prim_with_clone_access(p_type.clone(), field_name.clone())
-                    // } else if is_ref && p_type != "String" {
-                    //     // pointer
-                    //     build_plain_pointer_field(field_name.clone())
-                    // } else {
-                    //     build_field_prim(p_type.clone(), field_name.clone())
-                    // }
                 }
                 BasicType::UserDef(_) => {
                     if !is_ref {
@@ -1637,18 +1723,13 @@ impl<'a> DaikonDtraceVisitor<'a> {
         format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
     }
 
-    // TODO
-    // fn grok_fields_for_dtrace_print_fields_vec(&mut self, fields: &ThinVec<FieldDef>) -> Vec<String> {
-
-    // }
-
-    /*
-        Determine entry dtrace routines, grok return type.
-        return entry dtrace routines and something for the
-        return type so grok_fn_body knows what to do and
-        is only responsible for adding an extra let
-        binding and grokking the return expression to catch.
-    */
+    // Process the function arguments, and return a block of dtrace calls in
+    // a String to be inserted at the beginning and each exit ppt.
+    // TODO: dtrace calls should be represented with a better data structure, similar to
+    //       the structs defined in expand.rs for DaikonDeclsVisitor. This is easier to
+    //       do correctly and allows for more granular control over what should be logged
+    //       at each ppt. E.g., managing names for temporary variables correctly which is
+    //       botched at the moment, we have __daikon_tmp0 appearing multiple times.
     fn grok_fn_sig(&mut self, decl: &P<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
         // grok params
         let mut i = 0;
@@ -1834,10 +1915,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
             i += 1;
         }
 
-        // return param-dependent dtrace calls
+        // Return param-dependent dtrace calls
         dtrace_param_blocks
     }
 
+    // Walk a single block, used for recursing through nested
+    // blocks like if stmts and loops.
     #[allow(rustc::default_hash_types)]
     fn grok_block(
         &mut self,
@@ -1851,9 +1934,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
     ) {
         let mut i = 0;
 
-        // assuming no unreachable statements.
+        // Assuming no unreachable statements.
         while i < body.stmts.len() {
-            // make sure loop bound is growing as we insert stmts
             i = self.grok_stmt(
                 i,
                 body,
@@ -1863,20 +1945,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 &param_to_block_idx,
                 &ret_ty,
                 daikon_tmp_counter,
-            ); // match on Semi and blocks mainly for now, find return <expr>; and add an exit point.
+            );
         }
     }
 
-    // is it a good idea to store which params are valid at each exit
-    // ppt for the decls pass which happens after this?
-    // then the decls pass just needs to
-    // 1: visit_item to build HashMap<ident, StructNode>
-    // 2: visit_fn, grok sig, and grok exit ppts using structural
-    //    recursion on StructNodes for nesting. Need to use depth counter
-    //    for a base case.
-
-    // this code being messed up is independent from the dtrace_param_blocks being messed up.
-    // Make sure you know what's broken
+    // Walk the function body and insert dtrace calls at
+    // the beginning and at exit points.
     #[allow(rustc::default_hash_types)]
     fn grok_fn_body(
         &mut self,
@@ -1887,29 +1961,29 @@ impl<'a> DaikonDtraceVisitor<'a> {
         ret_ty: &FnRetTy,
         daikon_tmp_counter: &mut u32,
     ) {
-        //let original_len = body.stmts.len();
         let mut i = 0;
 
-        // update how you do nonces:
-        //   lock a global counter (you only need one)
-        //     store its current value
-        //     increment it
+        // How nonces should be done--
+        //   lock a global counter shared by the entire program
+        //   store its current value
+        //   increment it
         //   unlock
-        //   use the stored value at all exit points.
+        //   use the stored value at all exit points in this function
+        // Currently there is a nonce counter per file- not correct.
         i = self.insert_into_block(i, init_nonce(), body);
 
         let entry = build_entry(ppt_name.clone());
         i = self.insert_into_block(i, entry, body);
         for param_block in &mut *dtrace_param_blocks {
-            // :0 very scary scary
             i = self.insert_into_block(i, param_block.clone(), body);
         }
         i = self.insert_into_block(i, dtrace_newline(), body);
 
-        // before grokking fn body, turn implicit void return into "return;"
+        // Before grokking fn body, turn implicit void return into "return;"
         // this may be unreachable in some situations like
-        // fn foo(t: bool) { if t == true { return; } else { return; } }
-        // this cannot be avoided without some reachability analysis
+        // fn foo(t: bool) { if t { return; } else { return; } }
+        // In this situation we should not add a return stmt, but
+        // I cannot detect this yet.
         match &ret_ty {
             FnRetTy::Default(_) => {
                 if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
@@ -1919,12 +1993,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
             _ => {}
         }
 
-        // look for returns and nested blocks (recurse in those cases)
         let mut exit_counter = 1;
 
-        // assuming no unreachable statements.
+        // Assuming no unreachable statements.
         while i < body.stmts.len() {
-            // make sure loop bound is growing as we insert stmts
             i = self.grok_stmt(
                 i,
                 body,
@@ -1934,63 +2006,29 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 &param_to_block_idx,
                 &ret_ty,
                 daikon_tmp_counter,
-            ) // match on Semi mainly for now, find return <expr>; and add an exit point.
+            )
         }
     }
 }
 
 impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
-    /*
-        We should process the whole function at this point. It seems
-        like a bad idea to rely on some other component of the visitor
-        to grok the function body, since you have to manage other state
-        and keep track of which function you are currently processing,
-        which is challenging if the visitor visits functions and function
-        bodies in an illogical way.
-        Skip nested functions for now since they will be visited or have been visited,
-        but do recurse on all other kinds of nested blocks which will not be visited later
-        and are part of the function.
-    */
+    // Process the function signature to generate calls to log runtime values.
+    // Walk the function body and insert calls at exit points.
     fn visit_fn(&mut self, mut fk: FnKind<'_>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &mut fk {
             FnKind::Fn(_, _, f) => {
-                // nonce counter (move to function)
                 let ppt_name = String::from(f.ident.as_str());
                 if ppt_name == "execute" {
                     return;
                 }
-                // println!("now doing: {}", ppt_name);
-                // let counter =
-                //     if ppt_name == "main" {
-                //         build_main_counter()
-                //     } else {
-                //         build_nonce_counter(ppt_name.clone())
-                //     };
-                // match &self.parser.parse_items_from_string(counter) {
-                //     Err(_why) => panic!("Can't parse nonce counter"),
-                //     Ok(items) => {
-                //         for item in items {
-                //             println!("counter:\n{}\n\n", pprust::item_to_string(&item));
-                //             self.mod_items.push(item.clone());
-                //         }
-                //     }
-                // }
                 let mut daikon_tmp_counter = 0;
                 // get block of dtrace chunks -- one for each param
                 let mut dtrace_param_blocks =
                     self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
                 let param_to_block_idx = map_params(&f.sig.decl);
-                // let mut is_ref = false;
-                // let ret_ty = match &f.sig.decl.output {
-                //     FnRetTy::Default(_span) => BasicType::NoRet,
-                //     FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut is_ref)
-                // };
                 match &mut f.body {
                     None => {} // add all trace records up front
                     Some(body) => {
-                        // add a dtrace_entry record in grok_fn_body, and
-                        // make sure to separately pass in the calls generated
-                        // by grok_fn_sig
                         self.grok_fn_body(
                             ppt_name.clone(),
                             body,
@@ -2007,23 +2045,17 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         mut_visit::walk_fn(self, fk);
     }
 
+    // Visit all structs
+    // TODO: look up struct names in a /tmp file to determine
+    //       whether to continue or not.
     fn visit_item(&mut self, item: &mut Item) {
-        /*
-            TODO: match with structs, enums, and unions.
-                  Nested declarations will also be visited
-                  recursively, so don't worry about that here.
-        */
         let get_struct = pprust::item_to_string(&item);
         match &mut item.kind {
             ItemKind::Enum(_ident, generics, _enum_def) => {
-                // TODO: generate the same but noop
+                // TODO: remove
                 self.gen_impl_noop(&get_struct, &generics);
             }
             ItemKind::Struct(ident, generics, variant_data) => {
-                // where is the lifetime specifier? (generics, forward them to the impl block)
-                // println!("struct {}\n\n", ident);
-                // println!("generics:\n{:?}\n\n", generics);
-                // println!("variant_data:\n{:?}\n\n", variant_data);
                 match variant_data {
                     VariantData::Struct { fields, recovered: _recovered } => {
                         let mut the_path = Path::from_ident(ident.clone());
@@ -2066,7 +2098,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 }
             }
             ItemKind::Union(_ident, generics, _variant_data) => {
-                // TODO: generate the same but noop
+                // TODO: remove
                 self.gen_impl_noop(&get_struct, &generics);
             }
             _ => {}
@@ -2075,215 +2107,6 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         mut_visit::walk_item(self, item);
     }
 }
-
-impl<'a> DaikonNoopVisitor<'a> {
-    // Copied from above.
-    #[allow(dead_code)]
-    fn gen_impl_noop(&mut self, pp_struct: &String, struct_generics: &Generics) {
-        let mut impl_item = self.base_impl_item();
-        let the_impl = match &mut impl_item.kind {
-            ItemKind::Impl(i) => i,
-            _ => panic!("Base impl is not impl"),
-        };
-
-        if pp_struct.contains(":") {
-            return;
-        }
-
-        let mut stop = false;
-        let spliced_struct = splice_struct(&pp_struct, &mut stop);
-        if stop {
-            return;
-        }
-
-        let struct_as_ret = build_phony_ret(spliced_struct.clone());
-        println!("as ret: {}", struct_as_ret);
-        the_impl.self_ty = match &self.parser.parse_items_from_string(struct_as_ret.clone()) {
-            Err(_why) => {
-                panic!("Parsing phony arg failed");
-            }
-            Ok(arg_items) => match &arg_items[0].kind {
-                ItemKind::Fn(phony) => match &phony.sig.decl.output {
-                    FnRetTy::Ty(ty) => ty.clone(),
-                    _ => panic!("Phony ret is none"),
-                },
-                _ => panic!("Parsing phony fn failed"),
-            },
-        };
-        // the_impl.self_ty = Box::new(ty.clone()); :(
-        the_impl.generics = struct_generics.clone();
-
-        // We only need dtrace_print_fields and dtrace_print_fields_vec. xfield routines are only internal.
-        let dtrace_print_fields_fn_noop = self.build_dtrace_print_fields_noop();
-        match &self.parser.parse_items_from_string(dtrace_print_fields_fn_noop) {
-            Err(_) => panic!("Parsing dtrace_print_fields_noop failed"),
-            Ok(items) => match &items[0].kind {
-                ItemKind::Impl(tmp_impl) => {
-                    the_impl.items.push(tmp_impl.items[0].clone());
-                }
-                _ => panic!("Expected impl for noop 1"),
-            },
-        }
-
-        // let plain_struct =
-        //     match &ty.kind {
-        //         TyKind::Path(_, path) => String::from(path.segments[0].ident.as_str()),
-        //         _ => panic!("Why don't we have a path?")
-        //     };
-        let plain_struct = cut_lifetimes(spliced_struct.clone());
-        let dtrace_print_fields_vec = self.build_dtrace_print_fields_vec_noop(plain_struct.clone());
-        match &self.parser.parse_items_from_string(dtrace_print_fields_vec) {
-            Err(_) => panic!("Parsing dtrace_print_fields_vec failed"),
-            Ok(items) => match &items[0].kind {
-                ItemKind::Impl(tmp_impl) => {
-                    the_impl.items.push(tmp_impl.items[0].clone());
-                }
-                _ => panic!("Expected phony impl 2"),
-            },
-        }
-
-        self.mod_items.push(impl_item.clone());
-    }
-
-    // Just stuff the plain_struct in there.
-    #[allow(dead_code)]
-    fn build_dtrace_print_fields_vec_noop(&mut self, plain_struct: String) -> String {
-        format!("impl __skip {{ {} }}", build_dtrace_print_fields_vec_noop(plain_struct))
-    }
-
-    // this one easy
-    #[allow(dead_code)]
-    fn build_dtrace_print_fields_noop(&mut self) -> String {
-        format!("impl __skip {{ {} }}", build_dtrace_print_fields_noop())
-    }
-
-    #[allow(dead_code)]
-    fn base_impl_item(&mut self) -> P<Item> {
-        let base_impl = base_impl();
-        let base_impl_item = self.parser.parse_items_from_string(base_impl);
-        match &base_impl_item {
-            Err(_why) => panic!("Parsing base impl failed"),
-            Ok(base_impl_item) => base_impl_item[0].clone(),
-        }
-    }
-}
-
-impl<'a> MutVisitor for DaikonNoopVisitor<'a> {
-    fn visit_item(&mut self, item: &mut Item) {
-        /*
-            TODO: match with structs, enums, and unions.
-                  Nested declarations will also be visited
-                  recursively, so don't worry about that here.
-        */
-        let much_struct = pprust::item_to_string(&item);
-        println!("pp:\n{}\n\n", much_struct);
-        let mut lines = much_struct.lines();
-        let mut get_struct = much_struct.clone();
-        while let Some(next) = lines.next() {
-            if next.starts_with("pub")
-                || next.starts_with("struct")
-                || next.starts_with("enum")
-                || next.starts_with("union")
-            {
-                get_struct = String::from(next);
-                break;
-            }
-        }
-        // println!("now is: {}", get_struct);
-
-        match &mut item.kind {
-            ItemKind::Enum(_ident, generics, _enum_def) => {
-                // let mut the_path = Path::from_ident(ident.clone());
-                // let mut the_args: ThinVec<AngleBracketedArg> = ThinVec::new();
-                // let mut i = 0;
-                // while i < generics.params.len() {
-                //     match &generics.params[i].kind {
-                //         GenericParamKind::Lifetime => {
-                //             the_args.push(AngleBracketedArg::Arg( // what's left now is to fix all the weird shit that can go on here with generic args, constraints, etc.
-                //                 GenericArg::Lifetime(Lifetime {   // when to use Parenthesized, ParenthesizedElided, etc.
-                //                     id: NodeId::MAX_AS_U32.into(),
-                //                     ident: generics.params[i].ident.clone(),
-                //                 })
-                //             ));
-                //         }
-                //         GenericParamKind::Type { default } => match &default {
-                //             Some(d_ty) => {
-                //                 the_args.push(AngleBracketedArg::Arg(
-                //                     GenericArg::Type(d_ty.clone())
-                //                 ));
-                //             }
-                //             None => {
-                //                 panic!("bad");
-                //             }
-                //         }
-                //         GenericParamKind::Const { ty: _, span: _, default } => match &default {
-                //             Some(anon_const) => {
-                //                 the_args.push(AngleBracketedArg::Arg(
-                //                     GenericArg::Const(anon_const.clone())
-                //                 ));
-                //             }
-                //             None => {
-                //                 panic!("bad");
-                //             }
-                //         }
-                //     }
-                //     i += 1;
-                // }
-                // let angle_bracketed_args = AngleBracketedArgs {
-                //     span: item.span.clone(),
-                //     args: the_args,
-                // };
-                // the_path.segments[0].args = Some(Box::new(GenericArgs::AngleBracketed(angle_bracketed_args)));
-                // // TODO: generate the same but noop
-                // let the_ty = Ty {
-                //     id: NodeId::MAX_AS_U32.into(),
-                //     kind: TyKind::Path(None, the_path.clone()),
-                //     span: item.span.clone(),
-                //     tokens: None,
-                // };
-
-                self.gen_impl_noop(&get_struct, &generics);
-            }
-            ItemKind::Struct(_ident, generics, _variant_data) => {
-                // let the_ty = Ty {
-                //     id: NodeId::MAX_AS_U32,
-                //     // make path from ident, what about generics?
-                // }
-                // let the_ty = Ty {
-                //     id: NodeId::MAX_AS_U32.into(),
-                //     kind: TyKind::Path(None, Path::from_ident(ident.clone())),
-                //     span: item.span.clone(),
-                //     tokens: None,
-                // };
-                self.gen_impl_noop(&get_struct, &generics);
-                // match variant_data {
-                //     VariantData::Struct { fields, recovered: _recovered } => {
-                //         self.gen_impl(fields, &get_struct, &generics);
-                //     }
-                //     VariantData::Tuple(_, _) => {}
-                //     _ => {}
-                // }
-            }
-            ItemKind::Union(_ident, generics, _variant_data) => {
-                // let the_ty = Ty {
-                //     id: NodeId::MAX_AS_U32.into(),
-                //     kind: TyKind::Path(None, Path::from_ident(ident.clone())),
-                //     span: item.span.clone(),
-                //     tokens: None,
-                // };
-                // TODO: generate the same but noop
-                self.gen_impl_noop(&get_struct, &generics);
-            }
-            _ => {}
-        }
-
-        mut_visit::walk_item(self, item);
-    }
-}
-
-pub static OUTPUT_NAME: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::from("")));
-pub static DO_VISITOR: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
-static PARSER_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 
 impl<'a> Parser<'a> {
     /// Parses a source module as a crate. This is the main entry point for the parser.
@@ -2308,14 +2131,11 @@ impl<'a> Parser<'a> {
         Ok(ItemKind::Mod(safety, ident, mod_kind))
     }
 
-    // Convert String to items
-    // TODO: delete the file from the source map after parsing, then the counter can
-    //       go away. Also some errors will probably occur in some cases if they stay
-    //       and are type-checked which they will be later.
+    // Convert String to items. We create a new file dtrace_parserX each time we want to
+    // parse some new items vec. Diagnostics sometimes point to these files for unknown
+    // reasons.
     pub fn parse_items_from_string(&self, str: String) -> PResult<'a, ThinVec<P<Item>>> {
         let count = *PARSER_COUNTER.lock().unwrap();
-        // self.psess.dcx().make_silent();
-        // self.psess.dcx().reset_err_count();
         let mut tmp_parser = unwrap_or_emit_fatal(new_parser_from_source_str(
             &self.psess,
             rustc_span::FileName::Custom(format!("{}{}", "dtrace_parser", count.to_string())),
@@ -2334,7 +2154,7 @@ impl<'a> Parser<'a> {
             };
             tmp_items.push(item);
         }
-        // self.psess.dcx().reset_err_count();
+
         Ok(tmp_items)
     }
 
@@ -2349,7 +2169,7 @@ impl<'a> Parser<'a> {
         let lo = self.token.span;
         let attrs = self.parse_inner_attributes()?;
 
-        // Determine whether we are building internally
+        // Determine whether we are building crate std
         let source_map = self.psess.source_map();
         let do_noop = false;
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
@@ -2357,10 +2177,7 @@ impl<'a> Parser<'a> {
             Some(sf) => match &sf.name {
                 rustc_span::FileName::Real(file_name) => match &file_name {
                     rustc_span::RealFileName::LocalPath(path) => match &path.to_str() {
-                        Some(str) => {
-                            // do_noop = str.contains("library/std");
-                            !str.starts_with("library") && !str.contains(".cargo")
-                        }
+                        Some(str) => !str.starts_with("library") && !str.contains(".cargo"),
                         None => false,
                     },
                     _ => false,
@@ -2422,7 +2239,7 @@ impl<'a> Parser<'a> {
         //== Daikon dtrace instrumentation passes ==//
 
         if *DO_VISITOR.lock().unwrap() {
-            // do all mutation things
+            // do all instrumentation
             let mut items_to_append: ThinVec<P<Item>> = ThinVec::new();
             let mut impl_inserter =
                 DaikonDtraceVisitor { parser: &self, mod_items: &mut items_to_append };
@@ -2441,7 +2258,7 @@ impl<'a> Parser<'a> {
             }
             writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
 
-            // push daikon library and items_to_append to items.
+            // push daikon library
             match &self.parse_items_from_string(daikon_lib()) {
                 Err(_why) => panic!("Can't parse daikon lib"),
                 Ok(items) => {
@@ -2450,6 +2267,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+
             // imports
             match &self.parse_items_from_string(build_imports()) {
                 Err(_why) => panic!("Can't parse imports"),
@@ -2460,21 +2278,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let mut i = 0;
-            while i < items_to_append.len() {
-                items.push(items_to_append[i].clone());
-                i += 1;
-            }
-        } else if do_noop {
-            // TODO: remove this an implement a first pass with a /tmp file (or equivalent for Windows)
-            println!("hullo.");
-            let mut items_to_append: ThinVec<P<Item>> = ThinVec::new();
-
-            // We are bootstrapping, apply a noop visitor.
-            let mut noop_visitor =
-                DaikonNoopVisitor { parser: &self, mod_items: &mut items_to_append };
-            mut_visit::visit_items(&mut noop_visitor, &mut items);
-
+            // push everything else, e.g., impl blocks
             let mut i = 0;
             while i < items_to_append.len() {
                 items.push(items_to_append[i].clone());

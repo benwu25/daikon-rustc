@@ -45,8 +45,8 @@ pub(crate) fn init_nonce() -> String {
 }
 
 // TODO: before build_entry, initialize __daikon_nonce with the NONCE_COUNTER lock.
-pub(crate) static DTRACE_ENTRY: [&str; 2] = ["fn __skip() { dtrace_entry(\"",
-                                             ":::ENTER\", __daikon_nonce); }"];
+pub(crate) static DTRACE_ENTRY: [&str; 2] =
+    ["fn __skip() { dtrace_entry(\"", ":::ENTER\", __daikon_nonce); }"];
 pub(crate) fn build_entry(ppt_name: String) -> String {
     let mut res = String::from(DTRACE_ENTRY[0]);
     res.push_str(&ppt_name);
@@ -54,9 +54,8 @@ pub(crate) fn build_entry(ppt_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_EXIT: [&str; 3] = ["fn __skip() { dtrace_exit(\"",
-                                           ":::EXIT",
-                                           "\", __daikon_nonce); }"];
+pub(crate) static DTRACE_EXIT: [&str; 3] =
+    ["fn __skip() { dtrace_exit(\"", ":::EXIT", "\", __daikon_nonce); }"];
 pub(crate) fn build_exit(ppt_name: String, exit_counter: usize) -> String {
     let mut res = String::from(DTRACE_EXIT[0]);
     res.push_str(&ppt_name);
@@ -66,10 +65,8 @@ pub(crate) fn build_exit(ppt_name: String, exit_counter: usize) -> String {
     res
 }
 
-pub(crate) static DTRACE_PRIM: [&str; 4] = ["fn __skip() { dtrace_print_prim::<",
-                                            ">(",
-                                            ", String::from(\"",
-                                            "\")); }"];
+pub(crate) static DTRACE_PRIM: [&str; 4] =
+    ["fn __skip() { dtrace_print_prim::<", ">(", ", String::from(\"", "\")); }"];
 pub(crate) fn build_prim(p_type: String, var_name: String) -> String {
     let mut res = String::from(DTRACE_PRIM[0]);
     res.push_str(&p_type);
@@ -81,8 +78,8 @@ pub(crate) fn build_prim(p_type: String, var_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_PRIM_RET: [&str; 2] = ["fn __skip() { dtrace_print_prim::<",
-                                               ">(__daikon_ret, String::from(\"return\")); }"];
+pub(crate) static DTRACE_PRIM_RET: [&str; 2] =
+    ["fn __skip() { dtrace_print_prim::<", ">(__daikon_ret, String::from(\"return\")); }"];
 pub(crate) fn build_prim_ret(p_type: String) -> String {
     let mut res = String::from(DTRACE_PRIM_RET[0]);
     res.push_str(&p_type);
@@ -90,11 +87,13 @@ pub(crate) fn build_prim_ret(p_type: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_PRIM_REF: [&str; 5] = ["fn __skip() { dtrace_print_prim::<",
-                                               ">(",
-                                               "::from_str(&",
-                                               ".to_string()).expect(\"Ok\"), String::from(\"",
-                                               "\")); }"];
+pub(crate) static DTRACE_PRIM_REF: [&str; 5] = [
+    "fn __skip() { dtrace_print_prim::<",
+    ">(",
+    "::from_str(&",
+    ".to_string()).expect(\"Ok\"), String::from(\"",
+    "\")); }",
+];
 pub(crate) fn build_prim_ref(p_type: String, var_name: String) -> String {
     let mut res = String::from(DTRACE_PRIM_REF[0]);
     res.push_str(&p_type);
@@ -108,9 +107,13 @@ pub(crate) fn build_prim_ref(p_type: String, var_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_PRIM_REF_RET: [&str; 3] = ["fn __skip() { dtrace_print_prim::<",
-                                               ">(",
-                                               "::from_str(&__daikon_ret.to_string()).expect(\"Ok\"), String::from(\"return\")); }"];
+// Generic routine used to print all non-string primitive parameter and return
+// values.
+pub(crate) static DTRACE_PRIM_REF_RET: [&str; 3] = [
+    "fn __skip() { dtrace_print_prim::<",
+    ">(",
+    "::from_str(&__daikon_ret.to_string()).expect(\"Ok\"), String::from(\"return\")); }",
+];
 pub(crate) fn build_prim_ref_ret(p_type: String) -> String {
     let mut res = String::from(DTRACE_PRIM_REF_RET[0]);
     res.push_str(&p_type);
@@ -120,10 +123,10 @@ pub(crate) fn build_prim_ref_ret(p_type: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_PRIM_TOSTRING: [&str; 3] = ["fn __skip() { dtrace_print_string(",
-                                            ".to_string(), String::from(\"",
-                                            "\")); }"];
-pub(crate) fn build_prim_with_tostring(var_name: String) -> String { // TODO: change name
+pub(crate) static DTRACE_PRIM_TOSTRING: [&str; 3] =
+    ["fn __skip() { dtrace_print_string(", ".to_string(), String::from(\"", "\")); }"];
+pub(crate) fn build_prim_with_tostring(var_name: String) -> String {
+    // TODO: change name
     let mut res = String::from(DTRACE_PRIM_TOSTRING[0]);
     res.push_str(&var_name);
     res.push_str(DTRACE_PRIM_TOSTRING[1]);
@@ -132,14 +135,14 @@ pub(crate) fn build_prim_with_tostring(var_name: String) -> String { // TODO: ch
     res
 }
 
-pub(crate) static DTRACE_PRIM_TOSTRING_RET: &str = "fn __skip() { dtrace_print_string(__daikon_ret.to_string(), String::from(\"return\")); }";
+pub(crate) static DTRACE_PRIM_TOSTRING_RET: &str =
+    "fn __skip() { dtrace_print_string(__daikon_ret.to_string(), String::from(\"return\")); }";
 pub(crate) fn build_prim_with_tostring_ret() -> String {
     String::from(DTRACE_PRIM_TOSTRING_RET)
 }
 
-pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: [&str; 3] = ["dtrace_print_string(self.",
-                                                           ".to_string(), format!(\"{}{}\", prefix, \".",
-                                                           "\"));"];
+pub(crate) static DTRACE_PRIM_FIELD_TOSTRING: [&str; 3] =
+    ["dtrace_print_string(self.", ".to_string(), format!(\"{}{}\", prefix, \".", "\"));"];
 pub(crate) fn build_prim_field_tostring(field_name: String) -> String {
     let mut res = String::from(DTRACE_PRIM_FIELD_TOSTRING[0]);
     res.push_str(&field_name);
@@ -151,10 +154,8 @@ pub(crate) fn build_prim_field_tostring(field_name: String) -> String {
 
 // pub(crate) fn build_prim_with_to_string
 
-pub(crate) static DTRACE_PRIM_STRUCT: [&str; 4] = ["dtrace_print_prim::<",
-                                                  ">(self.",
-                                                  ", format!(\"{}{}\", prefix, \".",
-                                                  "\"));"];
+pub(crate) static DTRACE_PRIM_STRUCT: [&str; 4] =
+    ["dtrace_print_prim::<", ">(self.", ", format!(\"{}{}\", prefix, \".", "\"));"];
 pub(crate) fn build_field_prim(p_type: String, field_name: String) -> String {
     let mut res = String::from(DTRACE_PRIM_STRUCT[0]);
     res.push_str(&p_type);
@@ -168,11 +169,13 @@ pub(crate) fn build_field_prim(p_type: String, field_name: String) -> String {
 
 // TODO: if you have Vec<&'a &'b i32>, you will probably have to make a new Vec<i32> like this
 //       to satisfy dtrace_print_prim_vec<T>(v: &Vec<T>).
-pub(crate) static DTRACE_PRIM_REF_STRUCT: [&str; 5] = ["dtrace_print_prim::<",
-                                                       ">(",
-                                                       "::from_str(&self.",
-                                                       ".to_string()).expect(\"Ok\"), format!(\"{}{}\", prefix, \".",
-                                                       "\"));"];
+pub(crate) static DTRACE_PRIM_REF_STRUCT: [&str; 5] = [
+    "dtrace_print_prim::<",
+    ">(",
+    "::from_str(&self.",
+    ".to_string()).expect(\"Ok\"), format!(\"{}{}\", prefix, \".",
+    "\"));",
+];
 pub(crate) fn build_field_prim_ref(p_type: String, field_name: String) -> String {
     let mut res = String::from(DTRACE_PRIM_REF_STRUCT[0]);
     res.push_str(&p_type);
@@ -186,12 +189,14 @@ pub(crate) fn build_field_prim_ref(p_type: String, field_name: String) -> String
     res
 }
 
-pub(crate) static DTRACE_USERDEF: [&str; 6] = ["fn __skip() { dtrace_print_pointer(",
-                                               " as *const _ as usize, String::from(\"",
-                                               "\"));\n",
-                                               ".dtrace_print_fields(",
-                                               ", String::from(\"",
-                                               "\")); }"];
+pub(crate) static DTRACE_USERDEF: [&str; 6] = [
+    "fn __skip() { dtrace_print_pointer(",
+    " as *const _ as usize, String::from(\"",
+    "\"));\n",
+    ".dtrace_print_fields(",
+    ", String::from(\"",
+    "\")); }",
+];
 pub(crate) fn build_userdef(var_name: String, depth_arg: i32) -> String {
     let mut res = String::from(DTRACE_USERDEF[0]);
     res.push_str(&var_name);
@@ -222,8 +227,10 @@ pub(crate) fn build_userdef_with_ampersand_access(var_name: String, depth_arg: i
     res
 }
 
-pub(crate) static DTRACE_USERDEF_RET: [&str; 2] = ["fn __skip() { dtrace_print_pointer(__daikon_ret as *const _ as usize, String::from(\"return\"));\n__daikon_ret.dtrace_print_fields(",
-                                                  ", String::from(\"return\")); }"];
+pub(crate) static DTRACE_USERDEF_RET: [&str; 2] = [
+    "fn __skip() { dtrace_print_pointer(__daikon_ret as *const _ as usize, String::from(\"return\"));\n__daikon_ret.dtrace_print_fields(",
+    ", String::from(\"return\")); }",
+];
 pub(crate) fn build_userdef_ret(depth_arg: i32) -> String {
     let mut res = String::from(DTRACE_USERDEF_RET[0]);
     res.push_str(&String::from(depth_arg.to_string()));
@@ -231,8 +238,10 @@ pub(crate) fn build_userdef_ret(depth_arg: i32) -> String {
     res
 }
 
-pub(crate) static DTRACE_USERDEF_RET_AMPERSAND: [&str; 2] = ["fn __skip() { dtrace_print_pointer(&__daikon_ret as *const _ as usize, String::from(\"return\"));\n__daikon_ret.dtrace_print_fields(",
-                                                  ", String::from(\"return\")); }"];
+pub(crate) static DTRACE_USERDEF_RET_AMPERSAND: [&str; 2] = [
+    "fn __skip() { dtrace_print_pointer(&__daikon_ret as *const _ as usize, String::from(\"return\"));\n__daikon_ret.dtrace_print_fields(",
+    ", String::from(\"return\")); }",
+];
 pub(crate) fn build_userdef_ret_ampersand(depth_arg: i32) -> String {
     let mut res = String::from(DTRACE_USERDEF_RET_AMPERSAND[0]);
     res.push_str(&String::from(depth_arg.to_string()));
@@ -240,11 +249,13 @@ pub(crate) fn build_userdef_ret_ampersand(depth_arg: i32) -> String {
     res
 }
 
-pub(crate) static DTRACE_USERDEF_STRUCT: [&str; 5] = ["dtrace_print_pointer(self.",
-                                                      " as *const _ as usize, format!(\"{}{}\", prefix, \".",
-                                                      "\"));\nself.",
-                                                      ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
-                                                      "\"));"];
+pub(crate) static DTRACE_USERDEF_STRUCT: [&str; 5] = [
+    "dtrace_print_pointer(self.",
+    " as *const _ as usize, format!(\"{}{}\", prefix, \".",
+    "\"));\nself.",
+    ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
+    "\"));",
+];
 pub(crate) fn build_field_userdef(field_name: String) -> String {
     let mut res = String::from(DTRACE_USERDEF_STRUCT[0]);
     res.push_str(&field_name);
@@ -258,11 +269,13 @@ pub(crate) fn build_field_userdef(field_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_USERDEF_STRUCT_AMPERSAND: [&str; 5] = ["dtrace_print_pointer(&self.",
-                                                      " as *const _ as usize, format!(\"{}{}\", prefix, \".",
-                                                      "\"));\nself.",
-                                                      ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
-                                                      "\"));"];
+pub(crate) static DTRACE_USERDEF_STRUCT_AMPERSAND: [&str; 5] = [
+    "dtrace_print_pointer(&self.",
+    " as *const _ as usize, format!(\"{}{}\", prefix, \".",
+    "\"));\nself.",
+    ".dtrace_print_fields(depth - 1, format!(\"{}{}\", prefix, \".",
+    "\"));",
+];
 pub(crate) fn build_field_userdef_with_ampersand_access(field_name: String) -> String {
     let mut res = String::from(DTRACE_USERDEF_STRUCT_AMPERSAND[0]);
     res.push_str(&field_name);
@@ -277,10 +290,13 @@ pub(crate) fn build_field_userdef_with_ampersand_access(field_name: String) -> S
 }
 
 // always with ampersand, we will always make a copy.
-pub(crate) static DTRACE_USERDEF_VEC_FIELDS: [&str; 3] = ["::dtrace_print_fields_vec(&",
-                                                         ", depth - 1, format!(\"{}{}\", prefix, \".",
-                                                         "\"));"];
-pub(crate) fn build_print_vec_fields_userdef(plain_struct: String, tmp_vec_name: String, field_name: String) -> String {
+pub(crate) static DTRACE_USERDEF_VEC_FIELDS: [&str; 3] =
+    ["::dtrace_print_fields_vec(&", ", depth - 1, format!(\"{}{}\", prefix, \".", "\"));"];
+pub(crate) fn build_print_vec_fields_userdef(
+    plain_struct: String,
+    tmp_vec_name: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(&plain_struct);
     res.push_str(DTRACE_USERDEF_VEC_FIELDS[0]);
     res.push_str(&tmp_vec_name);
@@ -290,11 +306,13 @@ pub(crate) fn build_print_vec_fields_userdef(plain_struct: String, tmp_vec_name:
     res
 }
 
-pub(crate) static DTRACE_PRINT_XFIELD_VEC: [&str; 4] = ["::dtrace_print_",
-                                                       "_vec(&",
-                                                       ", format!(\"{}{}\", prefix, \".",
-                                                       "\"));"];
-pub(crate) fn build_print_xfield_vec(plain_struct: String, field_name: String, tmp_vec_name: String) -> String {
+pub(crate) static DTRACE_PRINT_XFIELD_VEC: [&str; 4] =
+    ["::dtrace_print_", "_vec(&", ", format!(\"{}{}\", prefix, \".", "\"));"];
+pub(crate) fn build_print_xfield_vec(
+    plain_struct: String,
+    field_name: String,
+    tmp_vec_name: String,
+) -> String {
     let mut res = String::from(&plain_struct);
     res.push_str(DTRACE_PRINT_XFIELD_VEC[0]);
     res.push_str(&field_name);
@@ -306,11 +324,13 @@ pub(crate) fn build_print_xfield_vec(plain_struct: String, field_name: String, t
     res
 }
 
-pub(crate) static DTRACE_PRINT_POINTER_VEC_USERDEF: [&str; 4] = ["dtrace_print_pointer_vec::<",
-                                                                 ">(&",
-                                                                 ", format!(\"{}{}\", prefix, \".",
-                                                                 "\"));"];
-pub(crate) fn build_print_pointer_vec_userdef(plain_struct: String, tmp_vec_name: String, field_name: String) -> String {
+pub(crate) static DTRACE_PRINT_POINTER_VEC_USERDEF: [&str; 4] =
+    ["dtrace_print_pointer_vec::<", ">(&", ", format!(\"{}{}\", prefix, \".", "\"));"];
+pub(crate) fn build_print_pointer_vec_userdef(
+    plain_struct: String,
+    tmp_vec_name: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DTRACE_PRINT_POINTER_VEC_USERDEF[0]);
     res.push_str(&plain_struct);
     res.push_str(DTRACE_PRINT_POINTER_VEC_USERDEF[1]);
@@ -322,9 +342,8 @@ pub(crate) fn build_print_pointer_vec_userdef(plain_struct: String, tmp_vec_name
 }
 
 // we're expecting a tmp vec loop before this.
-pub(crate) static DTRACE_VEC_POINTER: [&str; 3] = ["dtrace_print_pointer(",
-                                                  ".as_ptr() as usize, String::from(\"",
-                                                  "\"));"];
+pub(crate) static DTRACE_VEC_POINTER: [&str; 3] =
+    ["dtrace_print_pointer(", ".as_ptr() as usize, String::from(\"", "\"));"];
 pub(crate) fn build_pointer_vec(var_name: String) -> String {
     let mut res = String::from(DTRACE_VEC_POINTER[0]);
     res.push_str(&var_name);
@@ -334,16 +353,23 @@ pub(crate) fn build_pointer_vec(var_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_VEC_POINTER_RET: &str = "dtrace_print_pointer(__daikon_ret.as_ptr() as usize, String::from(\"return\"));";
+pub(crate) static DTRACE_VEC_POINTER_RET: &str =
+    "dtrace_print_pointer(__daikon_ret.as_ptr() as usize, String::from(\"return\"));";
 pub(crate) fn build_pointer_vec_ret() -> String {
     String::from(DTRACE_VEC_POINTER_RET)
 }
 
-pub(crate) static DTRACE_PRINT_POINTER_VEC: [&str; 4] = ["dtrace_print_pointer_vec::<",
-                                                        ">(&",
-                                                        ", format!(\"{}{}\", String::from(\"",
-                                                        "\"), \"[..]\"));"];
-pub(crate) fn build_print_pointer_vec(basic_type: String, tmp_name: String, var_name: String) -> String {
+pub(crate) static DTRACE_PRINT_POINTER_VEC: [&str; 4] = [
+    "dtrace_print_pointer_vec::<",
+    ">(&",
+    ", format!(\"{}{}\", String::from(\"",
+    "\"), \"[..]\"));",
+];
+pub(crate) fn build_print_pointer_vec(
+    basic_type: String,
+    tmp_name: String,
+    var_name: String,
+) -> String {
     let mut res = String::from(DTRACE_PRINT_POINTER_VEC[0]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_PRINT_POINTER_VEC[1]);
@@ -354,10 +380,13 @@ pub(crate) fn build_print_pointer_vec(basic_type: String, tmp_name: String, var_
     res
 }
 
-pub(crate) static DTRACE_VEC_FIELDS: [&str; 3] = ["::dtrace_print_fields_vec(&",
-                                                  ", 3, format!(\"{}{}\", String::from(\"",
-                                                  "\"), \"[..]\")); }"]; // we always mash with a tmp loop, so just close __skip.
-pub(crate) fn build_print_vec_fields(plain_struct: String, tmp_vec_name: String, var_name: String) -> String {
+pub(crate) static DTRACE_VEC_FIELDS: [&str; 3] =
+    ["::dtrace_print_fields_vec(&", ", 3, format!(\"{}{}\", String::from(\"", "\"), \"[..]\")); }"]; // we always mash with a tmp loop, so just close __skip.
+pub(crate) fn build_print_vec_fields(
+    plain_struct: String,
+    tmp_vec_name: String,
+    var_name: String,
+) -> String {
     let mut res = plain_struct.clone();
     res.push_str(DTRACE_VEC_FIELDS[0]);
     res.push_str(&tmp_vec_name);
@@ -370,15 +399,21 @@ pub(crate) fn build_print_vec_fields(plain_struct: String, tmp_vec_name: String,
 // pub(crate) static "dtrace-proint_::<"
 // pub(crate) fn build_print_prim_vec()...
 
-pub(crate) static DAIKON_TMP_VEC_USERDEF: [&str; 8] = ["let mut __daikon_tmp",
-                                                ": Vec<&",
-                                                "> = Vec::new(); let mut __daikon_tmp",
-                                                " = 0; while __daikon_tmp",
-                                                " < v.len() { __daikon_tmp",
-                                                ".push(v[__daikon_tmp",
-                                                "]); __daikon_tmp",
-                                                " += 1; }"];
-pub(crate) fn build_daikon_tmp_vec_userdef(first_tmp: String, basic_type: String, next_tmp: String) -> String {
+pub(crate) static DAIKON_TMP_VEC_USERDEF: [&str; 8] = [
+    "let mut __daikon_tmp",
+    ": Vec<&",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < v.len() { __daikon_tmp",
+    ".push(v[__daikon_tmp",
+    "]); __daikon_tmp",
+    " += 1; }",
+];
+pub(crate) fn build_daikon_tmp_vec_userdef(
+    first_tmp: String,
+    basic_type: String,
+    next_tmp: String,
+) -> String {
     let mut res = String::from(DAIKON_TMP_VEC_USERDEF[0]);
     res.push_str(&first_tmp);
     res.push_str(DAIKON_TMP_VEC_USERDEF[1]);
@@ -397,16 +432,23 @@ pub(crate) fn build_daikon_tmp_vec_userdef(first_tmp: String, basic_type: String
     res
 }
 
-pub(crate) static DAIKON_TMP_VEC_USERDEF_FIELD: [&str; 9] = ["let mut __daikon_tmp",
-                                                            ": Vec<&",
-                                                            "> = Vec::new(); let mut __daikon_tmp",
-                                                            " = 0; while __daikon_tmp",
-                                                            " < v.len() { __daikon_tmp",
-                                                            ".push(v[__daikon_tmp",
-                                                            "].",
-                                                            "); __daikon_tmp",
-                                                            " += 1; }"];
-pub(crate) fn build_daikon_tmp_vec_field_userdef(first_tmp: String, field_type: String, next_tmp: String, field_name: String) -> String {
+pub(crate) static DAIKON_TMP_VEC_USERDEF_FIELD: [&str; 9] = [
+    "let mut __daikon_tmp",
+    ": Vec<&",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < v.len() { __daikon_tmp",
+    ".push(v[__daikon_tmp",
+    "].",
+    "); __daikon_tmp",
+    " += 1; }",
+];
+pub(crate) fn build_daikon_tmp_vec_field_userdef(
+    first_tmp: String,
+    field_type: String,
+    next_tmp: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DAIKON_TMP_VEC_USERDEF_FIELD[0]);
     res.push_str(&first_tmp);
     res.push_str(DAIKON_TMP_VEC_USERDEF_FIELD[1]);
@@ -427,16 +469,23 @@ pub(crate) fn build_daikon_tmp_vec_field_userdef(first_tmp: String, field_type: 
     res
 }
 
-pub(crate) static DAIKON_TMP_VEC_USERDEF_FIELD_AMPERSAND: [&str; 9] = ["let mut __daikon_tmp",
-                                                                      ": Vec<&",
-                                                                      "> = Vec::new(); let mut __daikon_tmp",
-                                                                      " = 0; while __daikon_tmp",
-                                                                      " < v.len() { __daikon_tmp",
-                                                                      ".push(&v[__daikon_tmp",
-                                                                      "].",
-                                                                      "); __daikon_tmp",
-                                                                      " += 1; }"];
-pub(crate) fn build_daikon_tmp_vec_field_userdef_ampersand(first_tmp: String, field_type: String, next_tmp: String, field_name: String) -> String {
+pub(crate) static DAIKON_TMP_VEC_USERDEF_FIELD_AMPERSAND: [&str; 9] = [
+    "let mut __daikon_tmp",
+    ": Vec<&",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < v.len() { __daikon_tmp",
+    ".push(&v[__daikon_tmp",
+    "].",
+    "); __daikon_tmp",
+    " += 1; }",
+];
+pub(crate) fn build_daikon_tmp_vec_field_userdef_ampersand(
+    first_tmp: String,
+    field_type: String,
+    next_tmp: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DAIKON_TMP_VEC_USERDEF_FIELD_AMPERSAND[0]);
     res.push_str(&first_tmp);
     res.push_str(DAIKON_TMP_VEC_USERDEF_FIELD_AMPERSAND[1]);
@@ -459,17 +508,24 @@ pub(crate) fn build_daikon_tmp_vec_field_userdef_ampersand(first_tmp: String, fi
 
 // this will always be mashed with some subsequent call, so don't close __skip yet.
 // the thing you mash it with must close __skip.
-pub(crate) static DAIKON_TMP_VEC: [&str; 10] = ["fn __skip() { let mut __daikon_tmp",
-                                                ": Vec<&",
-                                                "> = Vec::new(); let mut __daikon_tmp",
-                                                " = 0; while __daikon_tmp",
-                                                " < ",
-                                                ".len() { __daikon_tmp",
-                                                ".push(",
-                                                "[__daikon_tmp",
-                                                "]); __daikon_tmp",
-                                                " += 1; }"];
-pub(crate) fn build_daikon_tmp_vec(first_tmp: String, basic_type: String, next_tmp: String, var_name: String) -> String {
+pub(crate) static DAIKON_TMP_VEC: [&str; 10] = [
+    "fn __skip() { let mut __daikon_tmp",
+    ": Vec<&",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < ",
+    ".len() { __daikon_tmp",
+    ".push(",
+    "[__daikon_tmp",
+    "]); __daikon_tmp",
+    " += 1; }",
+];
+pub(crate) fn build_daikon_tmp_vec(
+    first_tmp: String,
+    basic_type: String,
+    next_tmp: String,
+    var_name: String,
+) -> String {
     let mut res = String::from(DAIKON_TMP_VEC[0]);
     res.push_str(&first_tmp);
     res.push_str(DAIKON_TMP_VEC[1]);
@@ -493,17 +549,24 @@ pub(crate) fn build_daikon_tmp_vec(first_tmp: String, basic_type: String, next_t
 }
 
 // TODO: use this for params/returns where you have Vec<Type>.
-pub(crate) static DAIKON_TMP_VEC_AMPERSAND: [&str; 10] = ["fn __skip() { let mut __daikon_tmp",
-                                                ": Vec<&",
-                                                "> = Vec::new(); let mut __daikon_tmp",
-                                                " = 0; while __daikon_tmp",
-                                                " < ",
-                                                ".len() { __daikon_tmp",
-                                                ".push(&", // for Vec<Type>, need to take &.
-                                                "[__daikon_tmp",
-                                                "]); __daikon_tmp",
-                                                " += 1; }"];
-pub(crate) fn build_daikon_tmp_vec_ampersand(first_tmp: String, basic_type: String, next_tmp: String, var_name: String) -> String {
+pub(crate) static DAIKON_TMP_VEC_AMPERSAND: [&str; 10] = [
+    "fn __skip() { let mut __daikon_tmp",
+    ": Vec<&",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < ",
+    ".len() { __daikon_tmp",
+    ".push(&", // for Vec<Type>, need to take &.
+    "[__daikon_tmp",
+    "]); __daikon_tmp",
+    " += 1; }",
+];
+pub(crate) fn build_daikon_tmp_vec_ampersand(
+    first_tmp: String,
+    basic_type: String,
+    next_tmp: String,
+    var_name: String,
+) -> String {
     let mut res = String::from(DAIKON_TMP_VEC_AMPERSAND[0]);
     res.push_str(&first_tmp);
     res.push_str(DAIKON_TMP_VEC_AMPERSAND[1]);
@@ -526,18 +589,25 @@ pub(crate) fn build_daikon_tmp_vec_ampersand(first_tmp: String, basic_type: Stri
     res
 }
 
-pub(crate) static DAIKON_TMP_VEC_PRIM: [&str; 11] = ["fn __skip() { let mut __daikon_tmp",
-                                                   ": Vec<",
-                                                   "> = Vec::new(); let mut __daikon_tmp",
-                                                   " = 0; while __daikon_tmp",
-                                                   " < ",
-                                                   ".len() {__daikon_tmp",
-                                                   ".push(",
-                                                   "::from_str(&",
-                                                   "[__daikon_tmp",
-                                                   "].to_string()).expect(\"Ok\")); __daikon_tmp",
-                                                   " += 1; }"]; // don't close __skip() because we will mash
-pub(crate) fn build_tmp_vec_prim(first_tmp: String, p_type: String, next_tmp: String, var_name: String) -> String {
+pub(crate) static DAIKON_TMP_VEC_PRIM: [&str; 11] = [
+    "fn __skip() { let mut __daikon_tmp",
+    ": Vec<",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < ",
+    ".len() {__daikon_tmp",
+    ".push(",
+    "::from_str(&",
+    "[__daikon_tmp",
+    "].to_string()).expect(\"Ok\")); __daikon_tmp",
+    " += 1; }",
+]; // don't close __skip() because we will mash
+pub(crate) fn build_tmp_vec_prim(
+    first_tmp: String,
+    p_type: String,
+    next_tmp: String,
+    var_name: String,
+) -> String {
     let mut res = String::from(DAIKON_TMP_VEC_PRIM[0]);
     res.push_str(&first_tmp);
     res.push_str(DAIKON_TMP_VEC_PRIM[1]);
@@ -562,17 +632,24 @@ pub(crate) fn build_tmp_vec_prim(first_tmp: String, p_type: String, next_tmp: St
     res
 }
 
-pub(crate) static DTRACE_TMP_VEC_FOR_FIELD: [&str; 10] = ["let mut __daikon_tmp",
-                                                        ": Vec<&",
-                                                        "> = Vec::new(); let mut __daikon_tmp",
-                                                        " = 0; while __daikon_tmp",
-                                                        " < self.",
-                                                        ".len() { __daikon_tmp",
-                                                        ".push(self.",
-                                                        "[__daikon_tmp",
-                                                        "]); __daikon_tmp",
-                                                        " += 1 }"];
-pub(crate) fn build_tmp_vec_for_field(first_tmp: String, basic_type: String, next_tmp: String, field_name: String) -> String {
+pub(crate) static DTRACE_TMP_VEC_FOR_FIELD: [&str; 10] = [
+    "let mut __daikon_tmp",
+    ": Vec<&",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < self.",
+    ".len() { __daikon_tmp",
+    ".push(self.",
+    "[__daikon_tmp",
+    "]); __daikon_tmp",
+    " += 1 }",
+];
+pub(crate) fn build_tmp_vec_for_field(
+    first_tmp: String,
+    basic_type: String,
+    next_tmp: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DTRACE_TMP_VEC_FOR_FIELD[0]);
     res.push_str(&first_tmp);
     res.push_str(DTRACE_TMP_VEC_FOR_FIELD[1]);
@@ -596,17 +673,24 @@ pub(crate) fn build_tmp_vec_for_field(first_tmp: String, basic_type: String, nex
 }
 
 // TODO: use this for fields which are f: Vec<Type> or f: &Vec<Type>, need to use &.
-pub(crate) static DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND: [&str; 10] = ["let mut __daikon_tmp",
-                                                        ": Vec<&",
-                                                        "> = Vec::new(); let mut __daikon_tmp",
-                                                        " = 0; while __daikon_tmp",
-                                                        " < self.",
-                                                        ".len() { __daikon_tmp",
-                                                        ".push(&self.", // for f: Vec<Type>.
-                                                        "[__daikon_tmp",
-                                                        "]); __daikon_tmp",
-                                                        " += 1 }"];
-pub(crate) fn build_tmp_vec_for_field_ampersand(first_tmp: String, basic_type: String, next_tmp: String, field_name: String) -> String {
+pub(crate) static DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND: [&str; 10] = [
+    "let mut __daikon_tmp",
+    ": Vec<&",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < self.",
+    ".len() { __daikon_tmp",
+    ".push(&self.", // for f: Vec<Type>.
+    "[__daikon_tmp",
+    "]); __daikon_tmp",
+    " += 1 }",
+];
+pub(crate) fn build_tmp_vec_for_field_ampersand(
+    first_tmp: String,
+    basic_type: String,
+    next_tmp: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND[0]);
     res.push_str(&first_tmp);
     res.push_str(DTRACE_TMP_VEC_FOR_FIELD_AMPERSAND[1]);
@@ -629,9 +713,8 @@ pub(crate) fn build_tmp_vec_for_field_ampersand(first_tmp: String, basic_type: S
     res
 }
 
-pub(crate) static DTRACE_POINTER_VEC_USERDEF: [&str; 3] = ["dtrace_print_pointer(self.",
-                                                          ".as_ptr() as usize, format!(\"{}{}\", prefix, \".",
-                                                          "\"));"];
+pub(crate) static DTRACE_POINTER_VEC_USERDEF: [&str; 3] =
+    ["dtrace_print_pointer(self.", ".as_ptr() as usize, format!(\"{}{}\", prefix, \".", "\"));"];
 pub(crate) fn build_pointer_vec_userdef(field_name: String) -> String {
     let mut res = String::from(DTRACE_POINTER_VEC_USERDEF[0]);
     res.push_str(&field_name);
@@ -641,9 +724,11 @@ pub(crate) fn build_pointer_vec_userdef(field_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_POINTER_ARR_USERDEF: [&str; 3] = ["dtrace_print_pointer(self.",
-                                                           " as *const _ as *const () as usize, format!(\"{}{}\", prefix, \".",
-                                                           "\"));"];
+pub(crate) static DTRACE_POINTER_ARR_USERDEF: [&str; 3] = [
+    "dtrace_print_pointer(self.",
+    " as *const _ as *const () as usize, format!(\"{}{}\", prefix, \".",
+    "\"));",
+];
 pub(crate) fn build_pointer_arr_userdef(field_name: String) -> String {
     let mut res = String::from(DTRACE_POINTER_ARR_USERDEF[0]);
     res.push_str(&field_name);
@@ -653,11 +738,13 @@ pub(crate) fn build_pointer_arr_userdef(field_name: String) -> String {
     res
 }
 
-pub(crate) static DTRACE_POINTERS_VEC_USERDEF: [&str; 4] = ["dtrace_print_pointer_vec::<",
-                                                           ">(&",
-                                                           ", format!(\"{}{}[..]\", prefix, \".",
-                                                           "\"));"];
-pub(crate) fn build_pointers_vec_userdef(basic_type: String, tmp_name: String, field_name: String) -> String {
+pub(crate) static DTRACE_POINTERS_VEC_USERDEF: [&str; 4] =
+    ["dtrace_print_pointer_vec::<", ">(&", ", format!(\"{}{}[..]\", prefix, \".", "\"));"];
+pub(crate) fn build_pointers_vec_userdef(
+    basic_type: String,
+    tmp_name: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DTRACE_POINTERS_VEC_USERDEF[0]);
     res.push_str(&basic_type);
     res.push_str(DTRACE_POINTERS_VEC_USERDEF[1]);
@@ -668,10 +755,13 @@ pub(crate) fn build_pointers_vec_userdef(basic_type: String, tmp_name: String, f
     res
 }
 
-pub(crate) static DTRACE_PRINT_FIELDS_FOR_FIELD: [&str; 3] = ["::dtrace_print_fields_vec(&",
-                                                             ", depth - 1, format!(\"{}{}[..]\", prefix, \".",
-                                                             "\"));"];
-pub(crate) fn build_print_vec_fields_for_field(basic_type: String, tmp_name: String, field_name: String) -> String {
+pub(crate) static DTRACE_PRINT_FIELDS_FOR_FIELD: [&str; 3] =
+    ["::dtrace_print_fields_vec(&", ", depth - 1, format!(\"{}{}[..]\", prefix, \".", "\"));"];
+pub(crate) fn build_print_vec_fields_for_field(
+    basic_type: String,
+    tmp_name: String,
+    field_name: String,
+) -> String {
     let mut res = basic_type.clone();
     res.push_str(DTRACE_PRINT_FIELDS_FOR_FIELD[0]);
     res.push_str(&tmp_name);
@@ -681,8 +771,8 @@ pub(crate) fn build_print_vec_fields_for_field(basic_type: String, tmp_name: Str
     res
 }
 
-pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE: [&str; 2] = ["pub fn dtrace_print_",
-                                                                      "(&self, depth: i32, prefix: String) {"];
+pub(crate) static DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE: [&str; 2] =
+    ["pub fn dtrace_print_", "(&self, depth: i32, prefix: String) {"];
 pub(crate) fn build_dtrace_print_xfield_prologue(field_name: String) -> String {
     let mut res = String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_PROLOGUE[0]);
     res.push_str(&field_name);
@@ -700,18 +790,25 @@ pub(crate) fn build_dtrace_print_xfield_epilogue() -> String {
     String::from(DTRACE_PRINT_XFIELD_FOR_FIELD_EPILOGUE)
 }
 
-pub(crate) static DTRACE_TMP_PRIM_VEC_FOR_FIELD: [&str; 11] = ["let mut __daikon_tmp",
-                                                             ": Vec<",
-                                                             "> = Vec::new(); let mut __daikon_tmp",
-                                                             " = 0; while __daikon_tmp",
-                                                             " < self.",
-                                                             ".len() { __daikon_tmp",
-                                                             ".push(",
-                                                             "::from_str(&self.",
-                                                             "[__daikon_tmp",
-                                                             "].to_string()).expect(\"Ok\")); __daikon_tmp",
-                                                             " += 1; }"];
-pub(crate) fn build_tmp_prim_vec_for_field(first_tmp: String, p_type: String, next_tmp: String, field_name: String) -> String {
+pub(crate) static DTRACE_TMP_PRIM_VEC_FOR_FIELD: [&str; 11] = [
+    "let mut __daikon_tmp",
+    ": Vec<",
+    "> = Vec::new(); let mut __daikon_tmp",
+    " = 0; while __daikon_tmp",
+    " < self.",
+    ".len() { __daikon_tmp",
+    ".push(",
+    "::from_str(&self.",
+    "[__daikon_tmp",
+    "].to_string()).expect(\"Ok\")); __daikon_tmp",
+    " += 1; }",
+];
+pub(crate) fn build_tmp_prim_vec_for_field(
+    first_tmp: String,
+    p_type: String,
+    next_tmp: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DTRACE_TMP_PRIM_VEC_FOR_FIELD[0]);
     res.push_str(&first_tmp);
     res.push_str(DTRACE_TMP_PRIM_VEC_FOR_FIELD[1]);
@@ -736,11 +833,13 @@ pub(crate) fn build_tmp_prim_vec_for_field(first_tmp: String, p_type: String, ne
     res
 }
 
-pub(crate) static DTRACE_PRINT_PRIM_VEC_FOR_FIELD: [&str; 4] = ["dtrace_print_prim_vec::<",
-                                                                ">(&",
-                                                                ", format!(\"{}{}\", prefix, \".",
-                                                                "\"));"];
-pub(crate) fn build_print_prim_vec_for_field(p_type: String, tmp_name: String, field_name: String) -> String {
+pub(crate) static DTRACE_PRINT_PRIM_VEC_FOR_FIELD: [&str; 4] =
+    ["dtrace_print_prim_vec::<", ">(&", ", format!(\"{}{}\", prefix, \".", "\"));"];
+pub(crate) fn build_print_prim_vec_for_field(
+    p_type: String,
+    tmp_name: String,
+    field_name: String,
+) -> String {
     let mut res = String::from(DTRACE_PRINT_PRIM_VEC_FOR_FIELD[0]);
     res.push_str(&p_type);
     res.push_str(DTRACE_PRINT_PRIM_VEC_FOR_FIELD[1]);
@@ -751,9 +850,8 @@ pub(crate) fn build_print_prim_vec_for_field(p_type: String, tmp_name: String, f
     res
 }
 
-pub(crate) static DTRACE_PRINT_STRING_VEC_FOR_FIELD: [&str; 3] = ["dtrace_print_string_vec(&",
-                                                                ", format!(\"{}{}\", prefix, \".",
-                                                                "\"));"];
+pub(crate) static DTRACE_PRINT_STRING_VEC_FOR_FIELD: [&str; 3] =
+    ["dtrace_print_string_vec(&", ", format!(\"{}{}\", prefix, \".", "\"));"];
 pub(crate) fn build_print_string_vec_for_field(tmp_name: String, field_name: String) -> String {
     let mut res = String::from(DTRACE_PRINT_STRING_VEC_FOR_FIELD[0]);
     res.push_str(&tmp_name);
@@ -763,8 +861,8 @@ pub(crate) fn build_print_string_vec_for_field(tmp_name: String, field_name: Str
     res
 }
 
-pub(crate) static DTRACE_CALL_PRINT_FIELD: [&str; 2] = ["self.dtrace_print_",
-                                                       "(depth, prefix.clone());"];
+pub(crate) static DTRACE_CALL_PRINT_FIELD: [&str; 2] =
+    ["self.dtrace_print_", "(depth, prefix.clone());"];
 pub(crate) fn build_call_print_field(field_name: String) -> String {
     let mut res = String::from(DTRACE_CALL_PRINT_FIELD[0]);
     res.push_str(&field_name);
@@ -810,9 +908,7 @@ pub(crate) fn build_print_xfield_for_vec(field_name: String, basic_type: String)
     res
 }
 
-pub(crate) static LET_RET: [&str; 3] = ["fn __skip() { let __daikon_ret: ",
-                                        " = ",
-                                        "; }"];
+pub(crate) static LET_RET: [&str; 3] = ["fn __skip() { let __daikon_ret: ", " = ", "; }"];
 pub(crate) fn build_let_ret(ret_ty: String, expr: String) -> String {
     let mut res = String::from(LET_RET[0]);
     res.push_str(&ret_ty);
@@ -839,8 +935,10 @@ pub(crate) fn dtrace_print_fields_epilogue() -> String {
     String::from(DTRACE_PRINT_FIELDS_EPILOGUE)
 }
 
-pub(crate) static DTRACE_PRINT_FIELDS_VEC_PROLOGUE: [&str; 2] = ["impl __skip { pub fn dtrace_print_fields_vec(v: &Vec<&",
-                                                                ">, depth: i32, prefix: String) { if depth == 0 { return; } "];
+pub(crate) static DTRACE_PRINT_FIELDS_VEC_PROLOGUE: [&str; 2] = [
+    "impl __skip { pub fn dtrace_print_fields_vec(v: &Vec<&",
+    ">, depth: i32, prefix: String) { if depth == 0 { return; } ",
+];
 pub(crate) fn dtrace_print_fields_vec_prologue(spliced_struct: String) -> String {
     let mut res = String::from(DTRACE_PRINT_FIELDS_VEC_PROLOGUE[0]);
     res.push_str(&spliced_struct);
@@ -937,9 +1035,8 @@ pub(crate) fn build_print_xfield_string(field_name: String, basic_type: String) 
     res
 }
 
-pub(crate) static BUILD_POINTER_ARR: [&str; 3] = ["dtrace_print_pointer(",
-                                                 " as *const _ as *const () as usize, String::from(\"",
-                                                 "\"));"];
+pub(crate) static BUILD_POINTER_ARR: [&str; 3] =
+    ["dtrace_print_pointer(", " as *const _ as *const () as usize, String::from(\"", "\"));"];
 pub(crate) fn build_pointer_arr(var_name: String) -> String {
     let mut res = String::from(BUILD_POINTER_ARR[0]);
     res.push_str(&var_name);
@@ -955,13 +1052,14 @@ pub(crate) fn build_pointer_arr_ret() -> String {
     String::from(BUILD_POINTER_ARR_RET)
 }
 
-pub(crate) static DTRACE_PRINT_FIELDS_NOOP: &str = "pub fn dtrace_print_fields(&self, _depth: i32, _prefix: String) {}";
+pub(crate) static DTRACE_PRINT_FIELDS_NOOP: &str =
+    "pub fn dtrace_print_fields(&self, _depth: i32, _prefix: String) {}";
 pub(crate) fn build_dtrace_print_fields_noop() -> String {
     String::from(DTRACE_PRINT_FIELDS_NOOP)
 }
 
-pub(crate) static DTRACE_PRINT_FIELDS_VEC_NOOP: [&str; 2] = ["pub fn dtrace_print_fields_vec(_v: &Vec<&",
-                                                             ">, _depth: i32, _prefix: String) {}"];
+pub(crate) static DTRACE_PRINT_FIELDS_VEC_NOOP: [&str; 2] =
+    ["pub fn dtrace_print_fields_vec(_v: &Vec<&", ">, _depth: i32, _prefix: String) {}"];
 pub(crate) fn build_dtrace_print_fields_vec_noop(basic_struct: String) -> String {
     let mut res = String::from(DTRACE_PRINT_FIELDS_VEC_NOOP[0]);
     res.push_str(&basic_struct);
@@ -970,10 +1068,8 @@ pub(crate) fn build_dtrace_print_fields_vec_noop(basic_struct: String) -> String
 }
 
 // only end fn __skip because we will smash a tmp vec loop on the front.
-pub(crate) static DTRACE_PRINT_PRIM_VEC: [&str; 4] = ["dtrace_print_prim_vec::<",
-                                                     ">(&",
-                                                     ", String::from(\"",
-                                                     "\")); }"];
+pub(crate) static DTRACE_PRINT_PRIM_VEC: [&str; 4] =
+    ["dtrace_print_prim_vec::<", ">(&", ", String::from(\"", "\")); }"];
 pub(crate) fn build_print_prim_vec(p_type: String, tmp_name: String, var_name: String) -> String {
     let mut res = String::from(DTRACE_PRINT_PRIM_VEC[0]);
     res.push_str(&p_type);
@@ -985,9 +1081,8 @@ pub(crate) fn build_print_prim_vec(p_type: String, tmp_name: String, var_name: S
     res
 }
 
-pub(crate) static DTRACE_PRINT_STRING_VEC: [&str; 3] = ["dtrace_print_string_vec(&",
-                                                       ", String::from(\"",
-                                                       "\")); }"];
+pub(crate) static DTRACE_PRINT_STRING_VEC: [&str; 3] =
+    ["dtrace_print_string_vec(&", ", String::from(\"", "\")); }"];
 pub(crate) fn build_print_string_vec(tmp_name: String, var_name: String) -> String {
     let mut res = String::from(DTRACE_PRINT_STRING_VEC[0]);
     res.push_str(&tmp_name);
@@ -1002,9 +1097,7 @@ pub(crate) fn base_impl() -> String {
     String::from(BUILD_A_IMPL_BLOCK)
 }
 
-pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 3] = ["fn __skip() -> ",
-                                                        " {}\nstruct ",
-                                                        "{}"];
+pub(crate) static FABRICATE_TYPE_FOR_IMPL: [&str; 3] = ["fn __skip() -> ", " {}\nstruct ", "{}"];
 pub(crate) fn build_phony_ret(struct_name: String) -> String {
     let mut res = String::from(FABRICATE_TYPE_FOR_IMPL[0]);
     res.push_str(&struct_name);
@@ -1031,8 +1124,8 @@ pub(crate) fn build_imports() -> String {
     String::from(IMPORTS)
 }
 
-pub(crate) static DAIKON_LIB: [&str; 15] =
-["pub fn dtrace_print_pointer_arr<T>(v: &[&T], var_name: String) {
+pub(crate) static DAIKON_LIB: [&str; 15] = [
+    "pub fn dtrace_print_pointer_arr<T>(v: &[&T], var_name: String) {
     let mut traces = match File::options().append(true).open(\"",
     ".dtrace\") {
         Err(why) => panic!(\"Daikon couldn't open file, {}\", why),
@@ -1230,7 +1323,8 @@ fn dtrace_newline() {
         Ok(traces) => traces,
     };
     writeln!(traces, \"\").ok();
-}"];
+}",
+];
 
 pub(crate) fn daikon_lib() -> String {
     let mut res = String::from(DAIKON_LIB[0]);
