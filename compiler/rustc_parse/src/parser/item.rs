@@ -1884,7 +1884,15 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Walk a single block, used for recursing through nested
     // blocks like if stmts and loops.
-    //
+    // ppt_name: program point name
+    // body: the block which we will walk
+    // dtrace_param_blocks: Vec of Strings containing dtrace
+    //                      calls for each parameter.
+    // param_to_block_idx:
+    // ret_ty: Function return type
+    // exit_counter: contains the next label for an exit ppt
+    // daikon_tmp_counter: contains the next label for a
+    //                     temporary variable
     #[allow(rustc::default_hash_types)]
     fn grok_block(
         &mut self,
@@ -1928,12 +1936,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
         let mut i = 0;
 
         // How nonces should be done--
-        //   lock a global counter shared by the entire program
+        //   lock a global counter shared by all threads
         //   store its current value
         //   increment it
         //   unlock
         //   use the stored value at all exit points in this function
-        // Currently there is a nonce counter per file- not correct.
+        // Currently there is a nonce counter per file which is not right.
         i = self.insert_into_block(i, init_nonce(), body);
 
         let entry = build_entry(ppt_name.clone());
@@ -1991,7 +1999,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
                 let param_to_block_idx = map_params(&f.sig.decl);
                 match &mut f.body {
-                    None => {} // add all trace records up front
+                    None => {}
                     Some(body) => {
                         self.grok_fn_body(
                             ppt_name.clone(),
@@ -2009,7 +2017,8 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
         mut_visit::walk_fn(self, fk);
     }
 
-    // Visit all structs
+    // Visit all structs and generate new impl blocks with dtrace
+    // routine definitions
     // TODO: look up struct names in a /tmp file to determine
     //       whether to continue or not.
     fn visit_item(&mut self, item: &mut Item) {
@@ -2019,48 +2028,46 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                 // TODO: remove
                 self.gen_impl_noop(&get_struct, &generics);
             }
-            ItemKind::Struct(ident, generics, variant_data) => {
-                match variant_data {
-                    VariantData::Struct { fields, recovered: _recovered } => {
-                        let mut the_path = Path::from_ident(ident.clone());
-                        let mut the_args: ThinVec<AngleBracketedArg> = ThinVec::new();
-                        let mut i = 0;
-                        while i < generics.params.len() {
-                            match &generics.params[i].kind {
-                                GenericParamKind::Lifetime => {
-                                    the_args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
-                                        Lifetime {
-                                            id: NodeId::MAX_AS_U32.into(),
-                                            ident: generics.params[i].ident.clone(),
-                                        },
-                                    )));
-                                }
-                                GenericParamKind::Type { default: _ } => {
-                                    panic!("Enum has type generic arg.")
-                                }
-                                GenericParamKind::Const { ty: _, span: _, default: _ } => {
-                                    panic!("Enum has const generic arg.")
-                                }
+            ItemKind::Struct(ident, generics, variant_data) => match variant_data {
+                VariantData::Struct { fields, recovered: _recovered } => {
+                    let mut the_path = Path::from_ident(ident.clone());
+                    let mut the_args: ThinVec<AngleBracketedArg> = ThinVec::new();
+                    let mut i = 0;
+                    while i < generics.params.len() {
+                        match &generics.params[i].kind {
+                            GenericParamKind::Lifetime => {
+                                the_args.push(AngleBracketedArg::Arg(GenericArg::Lifetime(
+                                    Lifetime {
+                                        id: NodeId::MAX_AS_U32.into(),
+                                        ident: generics.params[i].ident.clone(),
+                                    },
+                                )));
                             }
-                            i += 1;
+                            GenericParamKind::Type { default: _ } => {
+                                panic!("Enum has type generic arg.")
+                            }
+                            GenericParamKind::Const { ty: _, span: _, default: _ } => {
+                                panic!("Enum has const generic arg.")
+                            }
                         }
-                        let angle_bracketed_args =
-                            AngleBracketedArgs { span: item.span.clone(), args: the_args };
-                        the_path.segments[0].args =
-                            Some(Box::new(GenericArgs::AngleBracketed(angle_bracketed_args)));
-                        // TODO: generate the same but noop
-                        let the_ty = Ty {
-                            id: NodeId::MAX_AS_U32.into(),
-                            kind: TyKind::Path(None, the_path.clone()),
-                            span: item.span.clone(),
-                            tokens: None,
-                        };
-                        self.gen_impl(fields, &the_ty, &generics);
+                        // Return param-dependent dtrace calls
+                        i += 1;
                     }
-                    VariantData::Tuple(_, _) => {}
-                    _ => {}
+                    let angle_bracketed_args =
+                        AngleBracketedArgs { span: item.span.clone(), args: the_args };
+                    the_path.segments[0].args =
+                        Some(Box::new(GenericArgs::AngleBracketed(angle_bracketed_args)));
+                    let the_ty = Ty {
+                        id: NodeId::MAX_AS_U32.into(),
+                        kind: TyKind::Path(None, the_path.clone()),
+                        span: item.span.clone(),
+                        tokens: None,
+                    };
+                    self.gen_impl(fields, &the_ty, &generics);
                 }
-            }
+                VariantData::Tuple(_, _) => {}
+                _ => {}
+            },
             ItemKind::Union(_ident, generics, _variant_data) => {
                 // TODO: remove
                 self.gen_impl_noop(&get_struct, &generics);
@@ -2221,7 +2228,7 @@ impl<'a> Parser<'a> {
             }
             writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
 
-            // push daikon library
+            // add daikon library
             match &self.parse_items_from_string(daikon_lib()) {
                 Err(_why) => panic!("Can't parse daikon lib"),
                 Ok(items) => {
@@ -2231,7 +2238,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // imports
+            // add imports
+            // TODO: you should check if these imports are already included.
             match &self.parse_items_from_string(build_imports()) {
                 Err(_why) => panic!("Can't parse imports"),
                 Ok(prepend_items) => {
