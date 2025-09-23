@@ -482,7 +482,23 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
-    // grok body.stmts[i]
+    // Given a block body and an index i, process the stmt
+    // body.stmts[i]. This may be a return stmt or a new block,
+    // or a stmt which invalidates one of the parameters such
+    // as drop(param1).
+    // Returns the index to the next stmt to process. If new
+    // stmts have been added, returns the next stmt after all
+    // inserted stmts.
+    // loc: index representing the index to the stmt to process
+    // body: surrounding block containing the stmt
+    // exit_counter: int representing the next number to use to
+    //               label an exit ppt
+    // ppt_name: the program point name
+    // dtrace_param_blocks: Vec of String representing
+    //                      instrumentation which should be
+    //                      added at exit ppts
+    // param_to_block_idx:
+    // ret_ty: The return type of the function
     #[allow(rustc::default_hash_types)]
     fn grok_stmt(
         &mut self,
@@ -593,6 +609,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     );
                     return i + 1;
                 }
+                // Not sure how to handle match blocks
                 ExprKind::Match(_, arms, _) => {
                     let mut j = 0;
                     while j < arms.len() {
@@ -619,6 +636,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
             },
             _ => {}
         }
+        // Next, look for return stmts. If I merge these match blocks,
+        // the compiler complains about borrowing stmt mutably twice.
         match &stmt.kind {
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
@@ -626,7 +645,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     *exit_counter += 1;
                     i = self.insert_into_block(i, exit.clone(), body);
                     for param_block in &mut *dtrace_param_blocks {
-                        // :0 very scary scary
                         i = self.insert_into_block(i, param_block.clone(), body); // DAIKON TMP ERROR: you will end up using the same __daikon_tmp values because String...
                     }
 
@@ -635,8 +653,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     // we're sitting on the void return we just processed, so inc
                     // to move on
                     i += 1;
-
-                    // did you put return; in the right place? (no)
                 }
                 ExprKind::Ret(Some(return_expr)) => {
                     let exit = build_exit(ppt_name.clone(), *exit_counter);
@@ -645,7 +661,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     i = self.insert_into_block(i, exit.clone(), body);
 
                     for param_block in &mut *dtrace_param_blocks {
-                        // :0 very scary scary
                         i = self.insert_into_block(i, param_block.clone(), body);
                     }
 
@@ -666,29 +681,24 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             i = self.insert_into_block(i, ret_let, body);
 
                             let prim_record_ret = if p_type == "String" || p_type == "str" {
-                                // TODO: add quotes around string values
-                                // build_prim_with_tostring(p_type.clone(), String::from("ret"))
-                                build_prim_with_tostring_ret() // FOR RETURN
+                                build_prim_with_tostring_ret()
                             } else if ret_is_ref {
-                                // build_prim_ref(p_type.clone(), String::from("ret"))
-                                build_prim_ref_ret(p_type.clone()) // FOR RETURN
+                                build_prim_ref_ret(p_type.clone())
                             } else {
-                                // build_prim(p_type.clone(), String::from("ret"))
-                                build_prim_ret(p_type.clone()) // FOR RETURN
+                                build_prim_ret(p_type.clone())
                             };
                             i = self.insert_into_block(i, prim_record_ret, body);
                         }
                         BasicType::UserDef(userdef_type) => {
-                            // Finish up.
+                            // Hack: for now we don't handle things like Option and Result
+                            //       well. Once I implement a first pass, we can read from
+                            //       a /tmp file for the structs we need to instrument, so
+                            //       we won't get this far with Option, Result, HashMap, etc.
                             if userdef_type.starts_with("Option")
                                 || userdef_type.starts_with("Result")
                             {
-                                // println!("hi explicit option return");
                                 i = self.insert_into_block(i, dtrace_newline(), body);
 
-                                // let inc = build_inc(ppt_name.clone());
-                                // i = self.insert_into_block(i, inc, body);
-                                // i+1 because we are leaving the return stmt in.
                                 return i + 1;
                             }
 
@@ -701,13 +711,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
                             i = self.insert_into_block(i, ret_let, body);
                             if ret_is_ref == false {
-                                let userdef_record_ret =
-                                    // build_userdef_with_ampersand_access(String::from("ret"), 3 /* depth arg  */);
-                                    build_userdef_ret_ampersand(3); // FOR RETURN
+                                let userdef_record_ret = build_userdef_ret_ampersand(3);
                                 i = self.insert_into_block(i, userdef_record_ret, body);
                             } else {
-                                // let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
-                                let userdef_record_ret = build_userdef_ret(3); // FOR RETURN
+                                let userdef_record_ret = build_userdef_ret(3);
                                 i = self.insert_into_block(i, userdef_record_ret, body);
                             }
                         }
@@ -744,8 +751,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     next_tmp.clone(),
                                     String::from("__daikon_ret")
                                 ),
-                                // build_pointer_vec(String::from("ret")),
-                                build_pointer_vec_ret(), // FOR RETURN
+                                build_pointer_vec_ret(),
                                 print_vec.clone()
                             );
                             i = self.insert_into_block(i, prim_vec_record_ret, body);
@@ -771,13 +777,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     next_tmp.clone(),
                                     String::from("__daikon_ret")
                                 ),
-                                // build_pointer_vec(String::from("ret")),
-                                build_pointer_vec_ret(), // FOR RETURN
+                                build_pointer_vec_ret(),
                                 build_print_pointer_vec(
                                     basic_type.to_string(),
                                     format!("__daikon_tmp{}", first_tmp),
                                     String::from("return")
-                                ), // WARNING, not sure
+                                ), // ?
                                 build_print_vec_fields(
                                     basic_type.to_string(),
                                     format!("__daikon_tmp{}", first_tmp),
@@ -819,8 +824,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     next_tmp.clone(),
                                     String::from("__daikon_ret")
                                 ),
-                                // build_pointer_arr(String::from("ret")),
-                                build_pointer_arr_ret(), // FOR RETURN
+                                build_pointer_arr_ret(),
                                 print_vec.clone()
                             );
                             i = self.insert_into_block(i, prim_vec_record_ret, body);
@@ -846,8 +850,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                     next_tmp.clone(),
                                     String::from("__daikon_ret")
                                 ),
-                                // build_pointer_arr(String::from("ret")),
-                                build_pointer_arr_ret(), // FOR RETURN
+                                build_pointer_arr_ret(),
                                 build_print_pointer_vec(
                                     basic_type.to_string(),
                                     format!("__daikon_tmp{}", first_tmp),
@@ -867,16 +870,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
                     i = self.insert_into_block(i, dtrace_newline(), body);
 
-                    // let inc = build_inc(ppt_name.clone());
-                    // i = self.insert_into_block(i, inc, body);
-
                     let ret = build_ret();
                     i = self.insert_into_block(i, ret, body);
 
                     // remove old return stmt
-                    body.stmts.remove(i); // will want to println! this to debug
-
-                    // store (ok), log (ok), inc nonce counter (ok), and return (ok)
+                    body.stmts.remove(i);
                 }
                 ExprKind::Call(_call, _params) => {
                     return i + 1;
@@ -885,7 +883,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     return i + 1;
                 } // other things you overlooked
             },
-            // non-block exprs are exit points, approximating this with a catch-all for non-semi exprs
+            // Any stmt without a semicolon must be a trailing return.
+            // Blocks are no-semi exprs, but we should have caught them in the
+            // previous match stmt.
             StmtKind::Expr(no_semi_expr) => {
                 // we know it is not a block, so it must be trailing no-semi return expr
                 let exit = build_exit(ppt_name.clone(), *exit_counter);
@@ -894,7 +894,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 i = self.insert_into_block(i, exit.clone(), body);
 
                 for param_block in &mut *dtrace_param_blocks {
-                    // :0 very scary scary
                     i = self.insert_into_block(i, param_block.clone(), body);
                 }
 
@@ -914,21 +913,12 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
                         i = self.insert_into_block(i, ret_let, body);
 
-                        // TODO: use to_string combined with from_str for primitives
-                        // Cases:
-                        // p_type == "String" => call to_string into dtrace_print_prim::<p_type>
-                        // else if is_ref => call from_str(to_string()) into dtrace_print_prim::<p_type>
-                        // else => call dtrace_print_prim::<p_type>
                         let prim_record_ret = if p_type == "String" || p_type == "str" {
-                            // TODO: add quotes around string values
-                            // build_prim_with_tostring(p_type.clone(), String::from("ret"))
-                            build_prim_with_tostring_ret() // FOR RETURN
+                            build_prim_with_tostring_ret()
                         } else if ret_is_ref {
-                            // build_prim_ref(p_type.clone(), String::from("ret"))
-                            build_prim_ref_ret(p_type.clone()) // FOR RETURN
+                            build_prim_ref_ret(p_type.clone())
                         } else {
-                            // build_prim(p_type.clone(), String::from("ret"))
-                            build_prim_ret(p_type.clone()) // FOR RETURN
+                            build_prim_ret(p_type.clone())
                         };
                         i = self.insert_into_block(i, prim_record_ret, body);
                     }
@@ -936,12 +926,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         // Finish up.
                         if userdef_type.starts_with("Option") || userdef_type.starts_with("Result")
                         {
-                            // println!("hello");
                             i = self.insert_into_block(i, dtrace_newline(), body);
 
-                            // let inc = build_inc(ppt_name.clone());
-                            // i = self.insert_into_block(i, inc, body);
-                            // i+1 because we are leaving the return stmt in.
                             return i + 1;
                         }
 
@@ -954,12 +940,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
                         i = self.insert_into_block(i, ret_let, body);
                         if ret_is_ref == false {
-                            let userdef_record_ret =
-                                // build_userdef_with_ampersand_access(String::from("ret"), 3 /* depth arg  */);
-                                build_userdef_ret_ampersand(3); // FOR RETURN
+                            let userdef_record_ret = build_userdef_ret_ampersand(3);
                             i = self.insert_into_block(i, userdef_record_ret, body);
                         } else {
-                            // let userdef_record_ret = build_userdef(String::from("ret"), 3 /* depth arg  */);
                             let userdef_record_ret = build_userdef_ret(3); // FOR RETURN
                             i = self.insert_into_block(i, userdef_record_ret, body);
                         }
@@ -997,8 +980,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 next_tmp.clone(),
                                 String::from("__daikon_ret")
                             ),
-                            // build_pointer_vec(String::from("ret")),
-                            build_pointer_vec_ret(), // FOR RETURN
+                            build_pointer_vec_ret(),
                             print_vec.clone()
                         );
                         i = self.insert_into_block(i, prim_vec_record_ret, body);
@@ -1024,8 +1006,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 next_tmp.clone(),
                                 String::from("__daikon_ret")
                             ),
-                            // build_pointer_vec(String::from("ret")),
-                            build_pointer_vec_ret(), // FOR RETURN
+                            build_pointer_vec_ret(),
                             build_print_pointer_vec(
                                 basic_type.to_string(),
                                 format!("__daikon_tmp{}", first_tmp),
@@ -1072,8 +1053,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 next_tmp.clone(),
                                 String::from("__daikon_ret")
                             ),
-                            // build_pointer_arr(String::from("ret")),
-                            build_pointer_arr_ret(), // FOR RETURN
+                            build_pointer_arr_ret(),
                             print_vec.clone()
                         );
                         i = self.insert_into_block(i, prim_vec_record_ret, body);
@@ -1099,7 +1079,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                                 next_tmp.clone(),
                                 String::from("__daikon_ret")
                             ),
-                            // build_pointer_arr(String::from("ret")),
                             build_pointer_arr_ret(), // FOR RETURN
                             build_print_pointer_vec(
                                 basic_type.to_string(),
@@ -1120,14 +1099,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
                 i = self.insert_into_block(i, dtrace_newline(), body);
 
-                // let inc = build_inc(ppt_name.clone());
-                // i = self.insert_into_block(i, inc, body);
-
                 let ret = build_ret();
                 i = self.insert_into_block(i, ret, body);
 
                 // remove old return stmt
-                body.stmts.remove(i); // will want to println! this to debug
+                body.stmts.remove(i);
             }
             _ => {
                 return i + 1;
@@ -1136,6 +1112,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         i
     }
 
+    // Get 'impl X { }' as an Item struct.
+    // This will be built into a new impl with dtrace routines.
     fn base_impl_item(&mut self) -> P<Item> {
         let base_impl = base_impl();
         let base_impl_item = self.parser.parse_items_from_string(base_impl);
@@ -1145,6 +1123,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
+    // Hack: this routine is currently used to handle enums and unions.
+    // This will be fixed by using a /tmp file in a first pass.
     fn gen_impl_noop(&mut self, pp_struct: &String, struct_generics: &Generics) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
@@ -1197,12 +1177,9 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
-    // parse base impl block to an Item
-    // then pattern match on that item to do the modifications:
-    // set self_ty to this struct (clone)
-    // set generics to this struct's generics (clone)
-    // push our function onto the impl block's items.
-    // push that item onto self.mod_items (ok)
+    // This function generates a new impl for a user-defined struct with type
+    // ty. The impl will contain multiple synthesized functions, like
+    // dtrace_print_fields, dtrace_print_fields_vec, and more.
     fn gen_impl(&mut self, fields: &mut ThinVec<FieldDef>, ty: &Ty, struct_generics: &Generics) {
         let mut impl_item = self.base_impl_item();
         let the_impl = match &mut impl_item.kind {
@@ -1272,13 +1249,18 @@ impl<'a> DaikonDtraceVisitor<'a> {
         self.mod_items.push(impl_item.clone());
     }
 
-    // WARNING: also building dtrace_print_xfield here... be careful about different issues.
-    // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
+    // Given a struct fields, returns a String with code containing
+    // functions to log each field of the struct given a vec of
+    // such a struct.
+    // Additionally, for any Vec or array fields, adds a function
+    // which is responsible for logging these fields.
     fn build_dtrace_print_xfield_vec(
         &mut self,
         plain_struct: String,
         fields: &ThinVec<FieldDef>,
     ) -> String {
+        // WARNING: also building dtrace_print_xfield here... be careful about different issues.
+        // dtrace_print_xfield_vec prints scalar fields out of a Vec<Me>, and dtrace_print_xfield takes one Me and prints Me.f which is a Vec.
         let mut dtrace_print_xfields_vec = dtrace_print_xfields_vec_prologue();
 
         // not important for this to be here, these functions are self-contained so
@@ -1422,7 +1404,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             next_tmp.clone(),
                             field_name.clone()
                         ),
-                        // build_pointer_vec_userdef(field_name.clone()),
                         build_pointer_arr_userdef(field_name.clone()),
                         build_dtrace_print_xfield_middle(),
                         print_vec.clone(),
@@ -1483,7 +1464,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
             i += 1;
         }
         let res = format!("{}{}", dtrace_print_xfields_vec, dtrace_print_xfields_vec_epilogue());
-        // println!("\n\ndtrace_print_xfield_vec:\n{}\n\n", res);
         res
     }
 
@@ -1492,6 +1472,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
         format!("impl __skip {{ {} }}", build_dtrace_print_fields_vec_noop(plain_struct))
     }
 
+    // Builds the toplevel function which is called to log a Vec or array of a given struct.
     fn build_dtrace_print_fields_vec(
         &mut self,
         plain_struct: String,
@@ -1529,8 +1510,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         )
                     )
                 }
-                // Why, oh why, are you NEVER making a Vec of the FIELD type??? That is what should go here. Need to do cases for ref or not also!
-                // But, you don't really need to do it anywhere else but in this function, so that's nice.
                 BasicType::UserDef(field_type) => {
                     let first_tmp = daikon_tmp_counter.to_string();
                     daikon_tmp_counter += 1;
@@ -1648,8 +1627,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                 BasicType::NoRet => String::from(""),
                 BasicType::Error => panic!("Field type not handled"),
             };
-            // dtrace_field_vec_rec.push_str("\n"); // I don't think any newlines or formatting matters to the parser,
-            // and the pretty printer does what it wantsfor that.
 
             dtrace_print_fields_vec.push_str(&dtrace_field_vec_rec); // don't think a newline here would matter
             i += 1;
@@ -1659,13 +1636,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
         res
     }
 
-    // this one easy
     fn build_dtrace_print_fields_noop(&mut self) -> String {
         format!("impl __skip {{ {} }}", build_dtrace_print_fields_noop())
     }
 
-    // generate calls to put in dtrace_print_fields, maybe also dtrace_print_fields_vec at the same time.
-    // fn grok_struct_fields(&mut self, /* some vec with field info */) { }
     // Given a struct's field declarations, generate the function dtrace_print_fields(self)
     // to be added to the synthesized impl block.
     fn build_dtrace_print_fields(&mut self, fields: &mut ThinVec<FieldDef>) -> String {
@@ -1685,7 +1659,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
             let mut dtrace_field_rec = match &get_basic_type(&fields[i].ty.kind, &mut is_ref) {
                 BasicType::Prim(p_type) => {
                     if p_type == "String" || p_type == "str" {
-                        // TODO: put string values in quotes
                         build_prim_field_tostring(field_name.clone())
                     } else if is_ref {
                         build_field_prim_ref(p_type.clone(), field_name.clone())
@@ -1723,13 +1696,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
         format!("{}{}", dtrace_print_fields, dtrace_print_fields_epilogue())
     }
 
-    // Process the function arguments, and return a block of dtrace calls in
-    // a String to be inserted at the beginning and each exit ppt.
-    // TODO: dtrace calls should be represented with a better data structure, similar to
-    //       the structs defined in expand.rs for DaikonDeclsVisitor. This is easier to
-    //       do correctly and allows for more granular control over what should be logged
-    //       at each ppt. E.g., managing names for temporary variables correctly which is
-    //       botched at the moment, we have __daikon_tmp0 appearing multiple times.
+    // TODO: dtrace calls should be represented with a better data structures rather than
+    // Strings
+    // Given a function signature, generate a set of dtrace calls for each parameter. These
+    // will be reused at the function entry and each exit ppt.
     fn grok_fn_sig(&mut self, decl: &P<FnDecl>, daikon_tmp_counter: &mut u32) -> Vec<String> {
         // grok params
         let mut i = 0;
@@ -1737,13 +1707,11 @@ impl<'a> DaikonDtraceVisitor<'a> {
         while i < decl.inputs.len() {
             let mut is_ref = false;
             let mut dtrace_rec = if get_param_ident(&decl.inputs[i].pat) == "self" {
-                // println!("hi self!");
                 build_userdef(get_param_ident(&decl.inputs[i].pat), 3 /* depth_arg  */)
             } else {
                 match &get_basic_type(&decl.inputs[i].ty.kind, &mut is_ref) {
                     BasicType::Prim(p_type) => {
                         if p_type == "String" || p_type == "str" {
-                            // TODO: put quotes around String values
                             build_prim_with_tostring(get_param_ident(&decl.inputs[i].pat))
                         } else if is_ref {
                             build_prim_ref(p_type.clone(), get_param_ident(&decl.inputs[i].pat))
@@ -1764,7 +1732,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             )
                         }
                     }
-                    // TODO: build __daikon_tmp_vec<some counter> and build_print_prim_vec().
                     BasicType::PrimVec(p_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
@@ -1794,10 +1761,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                             print_vec.clone()
                         )
                     }
-                    // TODO: build __daikon_tmp_vec<some counter> and:
-                    //      build_pointer_vec(), (to print the single pointer value)
-                    //      build_print_pointer_vec(), (to print top-level pointers for everyone)
-                    //      build_print_vec_fields(), (to print contents)
                     BasicType::UserDefVec(basic_type) => {
                         let first_tmp = daikon_tmp_counter.to_string();
                         *daikon_tmp_counter += 1;
@@ -1921,6 +1884,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
 
     // Walk a single block, used for recursing through nested
     // blocks like if stmts and loops.
+    //
     #[allow(rustc::default_hash_types)]
     fn grok_block(
         &mut self,
@@ -2171,7 +2135,6 @@ impl<'a> Parser<'a> {
 
         // Determine whether we are building crate std
         let source_map = self.psess.source_map();
-        let do_noop = false;
         let (source_file, _b, _c, _d, _e) = source_map.span_to_location_info(self.token.span);
         *DO_VISITOR.lock().unwrap() = match &source_file {
             Some(sf) => match &sf.name {
