@@ -2215,28 +2215,26 @@ impl<'a> Parser<'a> {
                 DaikonDtraceVisitor { parser: &self, mod_items: &mut items_to_append };
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
+            // push impl blocks
+            // Do before pretty printing for testing.
+            let mut i = 0;
+            while i < items_to_append.len() {
+                items.push(items_to_append[i].clone());
+                i += 1;
+            }
+
             // pretty print the instrumented code (without library/imports) for testing
             let pp_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".pp");
             let pp_as_path = std::path::Path::new(&pp_path);
             std::fs::File::create(&pp_as_path).unwrap();
             let mut pp =
                 std::fs::File::options().write(true).append(true).open(&pp_as_path).unwrap();
-            let mut i = 0;
+            i = 0;
             while i < items.len() - 1 {
                 writeln!(&mut pp, "{}\n", pprust::item_to_string(&items[i])).ok();
                 i += 1;
             }
             writeln!(&mut pp, "{}", pprust::item_to_string(&items[i])).ok();
-
-            // add daikon library
-            match &self.parse_items_from_string(daikon_lib()) {
-                Err(_why) => panic!("Can't parse daikon lib"),
-                Ok(items) => {
-                    for item in items {
-                        items_to_append.push(item.clone());
-                    }
-                }
-            }
 
             // add imports
             // TODO: you should check if these imports are already included.
@@ -2249,11 +2247,14 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // push everything else, e.g., impl blocks
-            let mut i = 0;
-            while i < items_to_append.len() {
-                items.push(items_to_append[i].clone());
-                i += 1;
+            // add daikon library
+            match &self.parse_items_from_string(daikon_lib()) {
+                Err(_why) => panic!("Can't parse daikon lib"),
+                Ok(lib_items) => {
+                    for item in lib_items {
+                        items.push(item.clone());
+                    }
+                }
             }
         }
 
