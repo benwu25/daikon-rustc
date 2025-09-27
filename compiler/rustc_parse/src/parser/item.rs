@@ -293,6 +293,10 @@ fn splice_struct(pp_struct: &String, stop: &mut bool) -> String {
 
 // Given a Rust type, break it down into something that fits into
 // BasicType. If it is a reference, note this with is_ref.
+// For Vec/array, is_ref indicates whether the contents of the
+// container are references or not rather than the container
+// itself. It does not matter if the container is_ref or not,
+// since we always make a copy Vec with references to contents.
 fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
     match &kind {
         TyKind::Array(arr_type, _anon_const) => match &get_basic_type(&arr_type.kind, is_ref) {
@@ -482,6 +486,198 @@ impl<'a> DaikonDtraceVisitor<'a> {
         }
     }
 
+    // Given a ret_expr from an explicit return stmt or a non-semi
+    // trailing return, insert code into body at index i to log the
+    // ret_expr.
+    // i: index into block to insert logging
+    // ret_expr: Expr representing the return value at a given exit ppt
+    // body: the block to insert into
+    // exit_counter: label for the next exit ppt
+    // ppt_name: program point name
+    // dtrace_param_blocks: Vec of logging code stored in Strings
+    // ret_ty: return type of the function
+    // daikon_tmp_counter: label for the next temporary variable
+    fn build_return(
+        &mut self,
+        i: &mut usize,
+        ret_expr: &Expr, // &Box<Expr>?
+        body: &mut P<Block>,
+        exit_counter: &mut usize,
+        ppt_name: String,
+        dtrace_param_blocks: &mut Vec<String>,
+        ret_ty: &FnRetTy,
+        daikon_tmp_counter: &mut u32,
+    ) {
+        let exit = build_exit(ppt_name.clone(), *exit_counter);
+        *exit_counter += 1;
+
+        *i = self.insert_into_block(*i, exit.clone(), body);
+
+        for param_block in &mut *dtrace_param_blocks {
+            *i = self.insert_into_block(*i, param_block.clone(), body);
+        }
+
+        let mut ret_is_ref = false;
+        let r_ty = match &ret_ty {
+            FnRetTy::Default(_span) => BasicType::NoRet,
+            FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
+        };
+        let pr_ty =
+            match &ret_ty {
+                FnRetTy::Ty(ty) => ty,
+                _ => panic!("Inconsistent return type"),
+            };
+        // Process return expr
+        let expr = pprust::expr_to_string(&ret_expr);
+        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
+        *i = self.insert_into_block(*i, ret_let, body);
+        match &r_ty {
+            BasicType::Prim(p_type) => {
+                let prim_record_ret = if p_type == "String" || p_type == "str" {
+                    build_prim_with_tostring_ret()
+                } else if ret_is_ref {
+                    build_prim_ref_ret(p_type.clone())
+                } else {
+                    build_prim_ret(p_type.clone())
+                };
+                *i = self.insert_into_block(*i, prim_record_ret, body);
+            }
+            BasicType::UserDef(_) => {
+                if ret_is_ref == false {
+                    let userdef_record_ret = build_userdef_ret_ampersand(3);
+                    *i = self.insert_into_block(*i, userdef_record_ret, body);
+                } else {
+                    let userdef_record_ret = build_userdef_ret(3);
+                    *i = self.insert_into_block(*i, userdef_record_ret, body);
+                }
+            }
+            BasicType::PrimVec(p_type) => {
+                let first_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let next_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let print_vec = if p_type == "String" || p_type == "str" {
+                    build_print_string_vec(
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return"),
+                    )
+                } else {
+                    build_print_prim_vec(
+                        p_type.clone(),
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return"),
+                    )
+                };
+                let prim_vec_record_ret = format!(
+                    "{}\n{}\n{}",
+                    build_tmp_vec_prim(
+                        first_tmp.clone(),
+                        p_type.to_string(),
+                        next_tmp.clone(),
+                        String::from("__daikon_ret")
+                    ),
+                    build_pointer_vec_ret(),
+                    print_vec.clone()
+                );
+                *i = self.insert_into_block(*i, prim_vec_record_ret, body);
+            }
+            BasicType::UserDefVec(basic_type) => {
+                let first_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let next_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let userdef_vec_record_ret = format!(
+                    "{}\n{}\n{}\n{}",
+                    build_daikon_tmp_vec(
+                        first_tmp.clone(),
+                        basic_type.to_string(),
+                        next_tmp.clone(),
+                        String::from("__daikon_ret")
+                    ),
+                    build_pointer_vec_ret(),
+                    build_print_pointer_vec(
+                        basic_type.to_string(),
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return")
+                    ), // ?
+                    build_print_vec_fields(
+                        basic_type.to_string(),
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return")
+                    )
+                );
+                *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
+            }
+            BasicType::PrimArray(p_type) => {
+                let first_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let next_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let print_vec = if p_type == "String" || p_type == "str" {
+                    build_print_string_vec(
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return"),
+                    )
+                } else {
+                    build_print_prim_vec(
+                        p_type.clone(),
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return"),
+                    )
+                };
+                let prim_vec_record_ret = format!(
+                    "{}\n{}\n{}",
+                    build_tmp_vec_prim(
+                        first_tmp.clone(),
+                        p_type.to_string(),
+                        next_tmp.clone(),
+                        String::from("__daikon_ret")
+                    ),
+                    build_pointer_arr_ret(),
+                    print_vec.clone()
+                );
+                *i = self.insert_into_block(*i, prim_vec_record_ret, body);
+            }
+            BasicType::UserDefArray(basic_type) => {
+                let first_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let next_tmp = daikon_tmp_counter.to_string();
+                *daikon_tmp_counter += 1;
+                let userdef_vec_record_ret = format!(
+                    "{}\n{}\n{}\n{}",
+                    build_daikon_tmp_vec(
+                        first_tmp.clone(),
+                        basic_type.to_string(),
+                        next_tmp.clone(),
+                        String::from("__daikon_ret")
+                    ),
+                    build_pointer_arr_ret(),
+                    build_print_pointer_vec(
+                        basic_type.to_string(),
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return")
+                    ),
+                    build_print_vec_fields(
+                        basic_type.to_string(),
+                        format!("__daikon_tmp{}", first_tmp),
+                        String::from("return")
+                    )
+                );
+                *i = self.insert_into_block(*i, userdef_vec_record_ret, body);
+            }
+            BasicType::NoRet => {}
+            BasicType::Error => panic!("ret_ty is BasicType::Error"),
+        }
+
+        *i = self.insert_into_block(*i, dtrace_newline(), body);
+
+        let ret = build_ret();
+        *i = self.insert_into_block(*i, ret, body);
+
+        // remove old return stmt
+        body.stmts.remove(*i);
+    }
+
     // Given a block body and an index i, process the stmt
     // body.stmts[i]. This may be a return stmt or a new block,
     // or a stmt which invalidates one of the parameters such
@@ -631,13 +827,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         j += 1;
                     }
                     return i + 1;
-                } // missing Match blocks, TryBlock, Const block? probably more
+                } // TryBlock, Const block? probably more
                 _ => {}
             },
             _ => {}
         }
-        // Next, look for return stmts. If I merge these match blocks,
-        // the compiler complains about borrowing stmt mutably twice.
+        // Next, look for return stmts.
+        // We start a new match block since we may be adding stmts
+        // into the block, so it does not make sense to relinquish
+        // mutability to the match block as above. The compiler
+        // will complain.
         match &stmt.kind {
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
@@ -645,7 +844,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     *exit_counter += 1;
                     i = self.insert_into_block(i, exit.clone(), body);
                     for param_block in &mut *dtrace_param_blocks {
-                        i = self.insert_into_block(i, param_block.clone(), body); // DAIKON TMP ERROR: you will end up using the same __daikon_tmp values because String...
+                        // DAIKON TMP ERROR: you will end up using the same __daikon_tmpX values,
+                        // but Rust doesn't care. Not high-priority, just weird to see
+                        // let __daikon_tmp7 = ... twice in the same scope.
+                        i = self.insert_into_block(i, param_block.clone(), body);
                     }
 
                     i = self.insert_into_block(i, dtrace_newline(), body);
@@ -655,226 +857,14 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     i += 1;
                 }
                 ExprKind::Ret(Some(return_expr)) => {
-                    let exit = build_exit(ppt_name.clone(), *exit_counter);
-                    *exit_counter += 1;
-
-                    i = self.insert_into_block(i, exit.clone(), body);
-
-                    for param_block in &mut *dtrace_param_blocks {
-                        i = self.insert_into_block(i, param_block.clone(), body);
-                    }
-
-                    let mut ret_is_ref = false;
-                    let r_ty = match &ret_ty {
-                        FnRetTy::Default(_span) => BasicType::NoRet,
-                        FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
-                    };
-                    match &r_ty {
-                        BasicType::Prim(p_type) => {
-                            let pr_ty = match &ret_ty {
-                                FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type"),
-                            };
-                            // Process return expr
-                            let expr = pprust::expr_to_string(&return_expr);
-                            let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                            i = self.insert_into_block(i, ret_let, body);
-
-                            let prim_record_ret = if p_type == "String" || p_type == "str" {
-                                build_prim_with_tostring_ret()
-                            } else if ret_is_ref {
-                                build_prim_ref_ret(p_type.clone())
-                            } else {
-                                build_prim_ret(p_type.clone())
-                            };
-                            i = self.insert_into_block(i, prim_record_ret, body);
-                        }
-                        BasicType::UserDef(userdef_type) => {
-                            // Hack: for now we don't handle things like Option and Result
-                            //       well. Once I implement a first pass, we can read from
-                            //       a /tmp file for the structs we need to instrument, so
-                            //       we won't get this far with Option, Result, HashMap, etc.
-                            if userdef_type.starts_with("Option")
-                                || userdef_type.starts_with("Result")
-                            {
-                                i = self.insert_into_block(i, dtrace_newline(), body);
-
-                                return i + 1;
-                            }
-
-                            let pr_ty = match &ret_ty {
-                                FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type"),
-                            };
-                            // Process return expr
-                            let expr = pprust::expr_to_string(&return_expr);
-                            let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                            i = self.insert_into_block(i, ret_let, body);
-                            if ret_is_ref == false {
-                                let userdef_record_ret = build_userdef_ret_ampersand(3);
-                                i = self.insert_into_block(i, userdef_record_ret, body);
-                            } else {
-                                let userdef_record_ret = build_userdef_ret(3);
-                                i = self.insert_into_block(i, userdef_record_ret, body);
-                            }
-                        }
-                        BasicType::PrimVec(p_type) => {
-                            let pr_ty = match &ret_ty {
-                                FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type"),
-                            };
-                            let expr = pprust::expr_to_string(&return_expr);
-                            let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                            i = self.insert_into_block(i, ret_let, body);
-
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let print_vec = if p_type == "String" || p_type == "str" {
-                                build_print_string_vec(
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return"),
-                                )
-                            } else {
-                                build_print_prim_vec(
-                                    p_type.clone(),
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return"),
-                                )
-                            };
-                            let prim_vec_record_ret = format!(
-                                "{}\n{}\n{}",
-                                build_tmp_vec_prim(
-                                    first_tmp.clone(),
-                                    p_type.to_string(),
-                                    next_tmp.clone(),
-                                    String::from("__daikon_ret")
-                                ),
-                                build_pointer_vec_ret(),
-                                print_vec.clone()
-                            );
-                            i = self.insert_into_block(i, prim_vec_record_ret, body);
-                        }
-                        BasicType::UserDefVec(basic_type) => {
-                            let pr_ty = match &ret_ty {
-                                FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type"),
-                            };
-                            let expr = pprust::expr_to_string(&return_expr);
-                            let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                            i = self.insert_into_block(i, ret_let, body);
-
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let userdef_vec_record_ret = format!(
-                                "{}\n{}\n{}\n{}",
-                                build_daikon_tmp_vec(
-                                    first_tmp.clone(),
-                                    basic_type.to_string(),
-                                    next_tmp.clone(),
-                                    String::from("__daikon_ret")
-                                ),
-                                build_pointer_vec_ret(),
-                                build_print_pointer_vec(
-                                    basic_type.to_string(),
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return")
-                                ), // ?
-                                build_print_vec_fields(
-                                    basic_type.to_string(),
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return")
-                                )
-                            );
-                            i = self.insert_into_block(i, userdef_vec_record_ret, body);
-                        }
-                        BasicType::PrimArray(p_type) => {
-                            let pr_ty = match &ret_ty {
-                                FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type"),
-                            };
-                            let expr = pprust::expr_to_string(&return_expr);
-                            let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                            i = self.insert_into_block(i, ret_let, body);
-
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let print_vec = if p_type == "String" || p_type == "str" {
-                                build_print_string_vec(
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return"),
-                                )
-                            } else {
-                                build_print_prim_vec(
-                                    p_type.clone(),
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return"),
-                                )
-                            };
-                            let prim_vec_record_ret = format!(
-                                "{}\n{}\n{}",
-                                build_tmp_vec_prim(
-                                    first_tmp.clone(),
-                                    p_type.to_string(),
-                                    next_tmp.clone(),
-                                    String::from("__daikon_ret")
-                                ),
-                                build_pointer_arr_ret(),
-                                print_vec.clone()
-                            );
-                            i = self.insert_into_block(i, prim_vec_record_ret, body);
-                        }
-                        BasicType::UserDefArray(basic_type) => {
-                            let pr_ty = match &ret_ty {
-                                FnRetTy::Ty(ty) => ty,
-                                _ => panic!("Inconsistent return type"),
-                            };
-                            let expr = pprust::expr_to_string(&return_expr);
-                            let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                            i = self.insert_into_block(i, ret_let, body);
-
-                            let first_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let next_tmp = daikon_tmp_counter.to_string();
-                            *daikon_tmp_counter += 1;
-                            let userdef_vec_record_ret = format!(
-                                "{}\n{}\n{}\n{}",
-                                build_daikon_tmp_vec(
-                                    first_tmp.clone(),
-                                    basic_type.to_string(),
-                                    next_tmp.clone(),
-                                    String::from("__daikon_ret")
-                                ),
-                                build_pointer_arr_ret(),
-                                build_print_pointer_vec(
-                                    basic_type.to_string(),
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return")
-                                ),
-                                build_print_vec_fields(
-                                    basic_type.to_string(),
-                                    format!("__daikon_tmp{}", first_tmp),
-                                    String::from("return")
-                                )
-                            );
-                            i = self.insert_into_block(i, userdef_vec_record_ret, body);
-                        }
-                        BasicType::NoRet => {}
-                        BasicType::Error => panic!("ret_ty is BasicType::Error"),
-                    }
-
-                    i = self.insert_into_block(i, dtrace_newline(), body);
-
-                    let ret = build_ret();
-                    i = self.insert_into_block(i, ret, body);
-
-                    // remove old return stmt
-                    body.stmts.remove(i);
+                    self.build_return(&mut i,
+                                      &return_expr,
+                                      body,
+                                      exit_counter,
+                                      ppt_name.clone(),
+                                      dtrace_param_blocks,
+                                      ret_ty,
+                                      daikon_tmp_counter);
                 }
                 ExprKind::Call(_call, _params) => {
                     return i + 1;
@@ -883,227 +873,19 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     return i + 1;
                 } // other things you overlooked
             },
-            // Any stmt without a semicolon must be a trailing return.
+            // Now, any stmt without a semicolon must be a trailing return?
             // Blocks are no-semi exprs, but we should have caught them in the
-            // previous match stmt.
+            // previous match block.
             StmtKind::Expr(no_semi_expr) => {
                 // we know it is not a block, so it must be trailing no-semi return expr
-                let exit = build_exit(ppt_name.clone(), *exit_counter);
-                *exit_counter += 1;
-
-                i = self.insert_into_block(i, exit.clone(), body);
-
-                for param_block in &mut *dtrace_param_blocks {
-                    i = self.insert_into_block(i, param_block.clone(), body);
-                }
-
-                let mut ret_is_ref = false;
-                let r_ty = match &ret_ty {
-                    FnRetTy::Default(_span) => BasicType::NoRet,
-                    FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
-                };
-                match &r_ty {
-                    BasicType::Prim(p_type) => {
-                        let pr_ty = match &ret_ty {
-                            FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type"),
-                        };
-                        // Process return expr
-                        let expr = pprust::expr_to_string(&no_semi_expr);
-                        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                        i = self.insert_into_block(i, ret_let, body);
-
-                        let prim_record_ret = if p_type == "String" || p_type == "str" {
-                            build_prim_with_tostring_ret()
-                        } else if ret_is_ref {
-                            build_prim_ref_ret(p_type.clone())
-                        } else {
-                            build_prim_ret(p_type.clone())
-                        };
-                        i = self.insert_into_block(i, prim_record_ret, body);
-                    }
-                    BasicType::UserDef(userdef_type) => {
-                        // Finish up.
-                        if userdef_type.starts_with("Option") || userdef_type.starts_with("Result")
-                        {
-                            i = self.insert_into_block(i, dtrace_newline(), body);
-
-                            return i + 1;
-                        }
-
-                        let pr_ty = match &ret_ty {
-                            FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type"),
-                        };
-                        // Process return expr
-                        let expr = pprust::expr_to_string(&no_semi_expr);
-                        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                        i = self.insert_into_block(i, ret_let, body);
-                        if ret_is_ref == false {
-                            let userdef_record_ret = build_userdef_ret_ampersand(3);
-                            i = self.insert_into_block(i, userdef_record_ret, body);
-                        } else {
-                            let userdef_record_ret = build_userdef_ret(3); // FOR RETURN
-                            i = self.insert_into_block(i, userdef_record_ret, body);
-                        }
-                    }
-                    BasicType::PrimVec(p_type) => {
-                        let pr_ty = match &ret_ty {
-                            FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type"),
-                        };
-                        let expr = pprust::expr_to_string(&no_semi_expr);
-                        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                        i = self.insert_into_block(i, ret_let, body);
-
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let print_vec = if p_type == "String" || p_type == "str" {
-                            build_print_string_vec(
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return"),
-                            )
-                        } else {
-                            build_print_prim_vec(
-                                p_type.clone(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return"),
-                            )
-                        };
-                        let prim_vec_record_ret = format!(
-                            "{}\n{}\n{}",
-                            build_tmp_vec_prim(
-                                first_tmp.clone(),
-                                p_type.to_string(),
-                                next_tmp.clone(),
-                                String::from("__daikon_ret")
-                            ),
-                            build_pointer_vec_ret(),
-                            print_vec.clone()
-                        );
-                        i = self.insert_into_block(i, prim_vec_record_ret, body);
-                    }
-                    BasicType::UserDefVec(basic_type) => {
-                        let pr_ty = match &ret_ty {
-                            FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type"),
-                        };
-                        let expr = pprust::expr_to_string(&no_semi_expr);
-                        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                        i = self.insert_into_block(i, ret_let, body);
-
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let userdef_vec_record_ret = format!(
-                            "{}\n{}\n{}\n{}",
-                            build_daikon_tmp_vec(
-                                first_tmp.clone(),
-                                basic_type.to_string(),
-                                next_tmp.clone(),
-                                String::from("__daikon_ret")
-                            ),
-                            build_pointer_vec_ret(),
-                            build_print_pointer_vec(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return")
-                            ),
-                            build_print_vec_fields(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return")
-                            )
-                        );
-                        i = self.insert_into_block(i, userdef_vec_record_ret, body);
-                    }
-                    BasicType::PrimArray(p_type) => {
-                        let pr_ty = match &ret_ty {
-                            FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type"),
-                        };
-                        let expr = pprust::expr_to_string(&no_semi_expr);
-                        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                        i = self.insert_into_block(i, ret_let, body);
-
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let print_vec = if p_type == "String" || p_type == "str" {
-                            build_print_string_vec(
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return"),
-                            )
-                        } else {
-                            build_print_prim_vec(
-                                p_type.clone(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return"),
-                            )
-                        };
-                        let prim_vec_record_ret = format!(
-                            "{}\n{}\n{}",
-                            build_tmp_vec_prim(
-                                first_tmp.clone(),
-                                p_type.to_string(),
-                                next_tmp.clone(),
-                                String::from("__daikon_ret")
-                            ),
-                            build_pointer_arr_ret(),
-                            print_vec.clone()
-                        );
-                        i = self.insert_into_block(i, prim_vec_record_ret, body);
-                    }
-                    BasicType::UserDefArray(basic_type) => {
-                        let pr_ty = match &ret_ty {
-                            FnRetTy::Ty(ty) => ty,
-                            _ => panic!("Inconsistent return type"),
-                        };
-                        let expr = pprust::expr_to_string(&no_semi_expr);
-                        let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
-                        i = self.insert_into_block(i, ret_let, body);
-
-                        let first_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let next_tmp = daikon_tmp_counter.to_string();
-                        *daikon_tmp_counter += 1;
-                        let userdef_vec_record_ret = format!(
-                            "{}\n{}\n{}\n{}",
-                            build_daikon_tmp_vec(
-                                first_tmp.clone(),
-                                basic_type.to_string(),
-                                next_tmp.clone(),
-                                String::from("__daikon_ret")
-                            ),
-                            build_pointer_arr_ret(), // FOR RETURN
-                            build_print_pointer_vec(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return")
-                            ),
-                            build_print_vec_fields(
-                                basic_type.to_string(),
-                                format!("__daikon_tmp{}", first_tmp),
-                                String::from("return")
-                            )
-                        );
-                        i = self.insert_into_block(i, userdef_vec_record_ret, body);
-                    }
-                    BasicType::NoRet => {}
-                    BasicType::Error => panic!("ret_ty is BasicType::Error"),
-                }
-
-                i = self.insert_into_block(i, dtrace_newline(), body);
-
-                let ret = build_ret();
-                i = self.insert_into_block(i, ret, body);
-
-                // remove old return stmt
-                body.stmts.remove(i);
+                self.build_return(&mut i,
+                                  &no_semi_expr,
+                                  body,
+                                  exit_counter,
+                                  ppt_name.clone(),
+                                  dtrace_param_blocks,
+                                  ret_ty,
+                                  daikon_tmp_counter);
             }
             _ => {
                 return i + 1;
@@ -1113,7 +895,7 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 
     // Get 'impl X { }' as an Item struct.
-    // This will be built into a new impl with dtrace routines.
+    // This will be transformed into a new impl with dtrace routines.
     fn base_impl_item(&mut self) -> P<Item> {
         let base_impl = base_impl();
         let base_impl_item = self.parser.parse_items_from_string(base_impl);
@@ -1439,7 +1221,6 @@ impl<'a> DaikonDtraceVisitor<'a> {
                         "{}\n{}\n{}\n{}\n{}\n{}\n{}",
                         build_dtrace_print_xfield_prologue(field_name.clone()),
                         tmp_vec.clone(),
-                        // build_pointer_vec_userdef(field_name.clone()),
                         build_pointer_arr_userdef(field_name.clone()),
                         build_pointers_vec_userdef(
                             basic_struct.to_string(),
@@ -1955,7 +1736,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
         // this may be unreachable in some situations like
         // fn foo(t: bool) { if t { return; } else { return; } }
         // In this situation we should not add a return stmt, but
-        // I cannot detect this yet.
+        // I cannot detect this yet, maybe there is a better solution
+        // to detecting the end of a function that returns void.
         match &ret_ty {
             FnRetTy::Default(_) => {
                 if body.stmts.len() == 0 || !last_stmt_is_void_return(body) {
@@ -1983,6 +1765,8 @@ impl<'a> DaikonDtraceVisitor<'a> {
     }
 }
 
+// The main visitor routines and entry-points for function and struct
+// instrumentation.
 impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
     // Process the function signature to generate calls to log runtime values.
     // Walk the function body and insert calls at exit points.
@@ -1994,7 +1778,7 @@ impl<'a> MutVisitor for DaikonDtraceVisitor<'a> {
                     return;
                 }
                 let mut daikon_tmp_counter = 0;
-                // get block of dtrace chunks -- one for each param
+                // get block of dtrace chunks -- one for each param (in a String, not good)
                 let mut dtrace_param_blocks =
                     self.grok_fn_sig(&f.sig.decl, &mut daikon_tmp_counter);
                 let param_to_block_idx = map_params(&f.sig.decl);
@@ -2216,7 +2000,6 @@ impl<'a> Parser<'a> {
             mut_visit::visit_items(&mut impl_inserter, &mut items);
 
             // push impl blocks
-            // Do before pretty printing for testing.
             let mut i = 0;
             while i < items_to_append.len() {
                 items.push(items_to_append[i].clone());
