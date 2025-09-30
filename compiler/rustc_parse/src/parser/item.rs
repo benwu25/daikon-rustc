@@ -334,7 +334,7 @@ fn get_basic_type(kind: &TyKind, is_ref: &mut bool) -> BasicType {
     }
 }
 
-// Heretofore unused. This was intended to allow easy invalidation
+// Unused. This was intended to allow easy invalidation
 // of parameters. E.g., if parameter x was invalidated with
 // drop(x), we need to know which idx it belongs to in our
 // Vec of dtrace information to avoid logging it at future

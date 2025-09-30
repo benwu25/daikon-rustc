@@ -471,6 +471,7 @@ impl Invocation {
     }
 }
 
+// Given a parameter pat, return its identifier name in a String
 fn get_param_ident(pat: &P<Pat>) -> String {
     match &pat.kind {
         PatKind::Ident(_mode, ident, None) => String::from(ident.as_str()),
@@ -478,6 +479,7 @@ fn get_param_ident(pat: &P<Pat>) -> String {
     }
 }
 
+// Given a Rust type, return its "Java" type if there is a match
 fn get_prim_rep_type(ty_str: &str) -> String {
     if ty_str == I8
         || ty_str == I16
@@ -507,16 +509,8 @@ fn get_prim_rep_type(ty_str: &str) -> String {
     String::from("")
 }
 
-// TODO: check for arrays of these, int[], boolean[], char[], java.lang.String[]
-// fn is_java_type(rep_type: &String) -> bool {
-//     if rep_type == "int" || rep_type == "char" ||
-//        rep_type == "boolean" || rep_type == "java.lang.String" {
-//         return true;
-//     }
-//     return false;
-// }
-
-// Will need to adjust this to get rep/dec types
+// Given the arguments to a Vec or array, return a RepType
+// enum representing the Vec/array.
 fn grok_vec_args(path: &Path) -> RepType {
     let mut is_ref = false;
     match &path.segments[path.segments.len() - 1].args {
@@ -542,6 +536,12 @@ fn grok_vec_args(path: &Path) -> RepType {
     }
 }
 
+// Capable of representing the rep-type of a Rust type
+// String payload represents the corresponding "Java" type
+// i32 -> Prim("int")
+// &[i32] -> PrimArray("int")
+// [X; 2] -> HashCodeArray("X")
+// &'a X -> HashCodeStruct("X")
 #[derive(PartialEq)]
 enum RepType {
     Prim(String),
@@ -550,7 +550,8 @@ enum RepType {
     HashCodeStruct(String),
 }
 
-// who gets hashcode[]
+// Given a Rust type kind, return its RepType. Also note whether the type
+// is a reference with is_ref.
 fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
     match &kind {
         TyKind::Array(arr_type, _) => match &get_rep_type(&arr_type.kind, is_ref) {
@@ -587,6 +588,7 @@ fn get_rep_type(kind: &TyKind, is_ref: &mut bool) -> RepType {
     }
 }
 
+// Unused
 #[allow(rustc::default_hash_types)]
 fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
     let mut res = HashMap::new();
@@ -598,12 +600,16 @@ fn map_params(decl: &P<FnDecl>) -> HashMap<String, i32> {
     res
 }
 
+// This struct is responsible for building a map from identifier to Struct
+// This will not be needed once we do a first pass, we can read from a /tmp
+// file to fill this purpose.
 #[allow(rustc::default_hash_types)]
 struct DeclsHashMapBuilder<'a> {
     pub map: &'a mut HashMap<String, P<Item>>,
 }
 
 impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
+    // Visit structs and fill hash map.
     fn visit_item(&mut self, item: &'a Item) {
         match &item.kind {
             ItemKind::Struct(ident, _, variant_data) => match variant_data {
@@ -620,12 +626,28 @@ impl<'a> Visitor<'a> for DeclsHashMapBuilder<'a> {
     }
 }
 
+// Main struct for walking functions to write the decls file.
+// map allows for quick retrieval of struct fields when a struct
+// parameter is encountered.
+// depth_limit tells us when to stop writing decls for recursive structs.
 #[allow(rustc::default_hash_types)]
 struct DaikonDeclsVisitor<'a> {
     pub map: &'a HashMap<String, P<Item>>,
     pub depth_limit: u32,
 }
 
+// Represents a parameter or return value which must be written to decls.
+// map: map from String to struct definition with field declarations
+// var_name: parameter name, or "return" for return values.
+// dec_type: Declared type of the value (dec-type for Daikon)
+// rep_type: Rep type of the value (rep-type for Daikon)
+// key: If the value is a struct, contains the struct type name for lookup,
+//      otherwise None.
+// field_decls: If the value is a struct, represents decl records for the
+//              fields of this struct
+// contents: If the value is Vec or array, a decls record for the contents
+//           of this outer container.
+// Note: it is maintained that only one of field_decls or contents will be Some.
 #[allow(rustc::default_hash_types)]
 struct TopLevlDecl<'a> {
     pub map: &'a HashMap<String, P<Item>>,
@@ -637,6 +659,10 @@ struct TopLevlDecl<'a> {
     pub contents: Option<ArrayContents<'a>>,
 }
 
+// Represents a field decl of a struct at some arb. depth.
+// enclosing_var: the identifier of the struct which contains this field.
+// field_name: name of this field
+// See TopLevlDecl for other fields.
 #[allow(rustc::default_hash_types)]
 struct FieldDecl<'a> {
     pub map: &'a HashMap<String, P<Item>>,
@@ -650,6 +676,10 @@ struct FieldDecl<'a> {
     pub contents: Option<ArrayContents<'a>>,
 }
 
+// Represents the array contents decl record (i.e., arr[..] or arr[..].g rather than arr)
+// enclosing_var: name of the outer container for this array or Vec
+// sub_contents: If we are an array of structs, we need ArrayContents for each field.
+// See TopLevlDecl for other fields.
 #[allow(rustc::default_hash_types)]
 struct ArrayContents<'a> {
     pub map: &'a HashMap<String, P<Item>>,
@@ -662,6 +692,8 @@ struct ArrayContents<'a> {
 }
 
 impl<'a> ArrayContents<'a> {
+    // Write out an ArrayContents to the decls file. We assume the cursor is at
+    // the right spot and we simply append ourselves to the file.
     fn write(&mut self) {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
@@ -692,6 +724,8 @@ impl<'a> ArrayContents<'a> {
         }
     }
 
+    // If we are an array of structs, use our key to fetch field definitions
+    // of our struct type.
     fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
         match &self.key {
@@ -716,8 +750,11 @@ impl<'a> ArrayContents<'a> {
         }
     }
 
-    // TODO: only ArrayContents should have this method, makes more sense that way.
-    // very similar to build_fields, different cases depending on RepType
+    // If we are an array of structs, recursively populate sub_contents by creating
+    // a new ArrayContents for each field.
+    // do_write: I think this was a hack for avoiding structs/enums/unions which did
+    //           not belong to the crate. That is again an ongoing issue with the /tmp
+    //           file we need to create in the first pass.
     fn build_contents(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
             return;
@@ -818,6 +855,7 @@ impl<'a> ArrayContents<'a> {
 }
 
 impl<'a> FieldDecl<'a> {
+    // Write this entire FieldDecl to the decls file.
     fn write(&mut self) {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
@@ -854,6 +892,8 @@ impl<'a> FieldDecl<'a> {
         }
     }
 
+    // If we are a struct type field, use our key to get field definitions
+    // for the struct type.
     fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
         match &self.key {
@@ -877,6 +917,8 @@ impl<'a> FieldDecl<'a> {
         }
     }
 
+    // If we are a struct field, recursively build up our field_decls by
+    // creating a new FieldDecl for each field.
     fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
             // Invalidate ourselves for writing? Or will writing stop too...
@@ -1028,6 +1070,7 @@ impl<'a> FieldDecl<'a> {
 }
 
 impl<'a> TopLevlDecl<'a> {
+    // Write this entire TopLevlDecl to the decls file.
     fn write(&mut self) {
         match &mut *DECLS.lock().unwrap() {
             None => panic!("Cannot open decls"),
@@ -1064,6 +1107,8 @@ impl<'a> TopLevlDecl<'a> {
         }
     }
 
+    // If we are a struct variable, recursively build declarations for our
+    // fields. Almost or maybe exactly the same as FieldDecl::build_fields.
     fn build_fields(&mut self, depth_limit: u32, do_write: &mut bool) {
         if depth_limit == 0 {
             // Invalidate ourselves for writing? Or will writing stop too...
@@ -1213,6 +1258,8 @@ impl<'a> TopLevlDecl<'a> {
         }
     }
 
+    // If we are a struct variable, use our key to get field definitions
+    // for our struct type.
     fn get_fields(&self, do_write: &mut bool) -> ThinVec<FieldDef> {
         // use self.key to look up who we are.
         match &self.key {
@@ -1237,6 +1284,7 @@ impl<'a> TopLevlDecl<'a> {
     }
 }
 
+// Helper to write function entries into the decls file.
 fn write_entry(ppt_name: String) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1247,6 +1295,7 @@ fn write_entry(ppt_name: String) {
     }
 }
 
+// Helper to write function exits into the decls file.
 fn write_exit(ppt_name: String, exit_counter: usize) {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1257,6 +1306,7 @@ fn write_exit(ppt_name: String, exit_counter: usize) {
     }
 }
 
+// Helper to add a newline in the decls file.
 fn write_newline() {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1266,6 +1316,7 @@ fn write_newline() {
     }
 }
 
+// Helper to write metadata header into the decls file.
 fn write_header() {
     match &mut *DECLS.lock().unwrap() {
         None => panic!("Cannot access decls"),
@@ -1278,6 +1329,8 @@ fn write_header() {
 }
 
 impl<'a> DaikonDeclsVisitor<'a> {
+    // Walk an if expression looking for returns.
+    // See rustc_parse::parser::item::grok_expr_for_if.
     #[allow(rustc::default_hash_types)]
     fn grok_expr_for_if(
         &mut self,
@@ -1331,7 +1384,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
         }
     }
 
-    // grok body.stmts[i]
+    // Process an entire stmt to identify an exit point or recurse on blocks.
+    // See rustc_parse::parser::item::grok_stmt.
     #[allow(rustc::default_hash_types)]
     fn grok_stmt(
         &mut self,
@@ -1344,10 +1398,7 @@ impl<'a> DaikonDeclsVisitor<'a> {
         ret_ty: &FnRetTy,
     ) -> usize {
         let mut i = loc;
-        let stmt = body.stmts[i].clone();
-        // println!("{}\n\n", pprust::stmt_to_string(&stmt));
         match &body.stmts[i].kind {
-            // TODO: you can probably merge these now since no &mut.
             StmtKind::Let(_local) => {
                 return i + 1;
             }
@@ -1438,9 +1489,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 } // missing Match blocks, TryBlock, Const block? probably more
                 _ => {}
             },
-            _ => {}
-        }
-        match &stmt.kind {
+            // Look for returns. dtrace passes have run, so all exit points should
+            // be identifiable by an explicit return stmt.
             StmtKind::Semi(semi) => match &semi.kind {
                 ExprKind::Ret(None) => {
                     write_exit(ppt_name.clone(), *exit_counter);
@@ -1607,12 +1657,12 @@ impl<'a> DaikonDeclsVisitor<'a> {
                     return i + 1;
                 } // other things you overlooked
             },
-            StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
-                ExprKind::Match(..) => {
-                    return i + 1;
-                }
-                _ => panic!("is this non-semi expr a return or a valid non-semi expr?"),
-            },
+            // StmtKind::Expr(no_semi_expr) => match &no_semi_expr.kind {
+            //     ExprKind::Match(..) => {
+            //         return i + 1;
+            //     }
+            //     _ => panic!("is this non-semi expr a return or a valid non-semi expr?"),
+            // },
             _ => {
                 return i + 1;
             }
@@ -1620,6 +1670,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
         i
     }
 
+    // Walk a new block looking for exit points and nested blocks.
+    // See rustc_parse::parser::item::grok_block.
     #[allow(rustc::default_hash_types)]
     fn grok_block(
         &mut self,
@@ -1655,8 +1707,8 @@ impl<'a> DaikonDeclsVisitor<'a> {
     //    recursion on StructNodes for nesting. Need to use depth counter
     //    for a base case.
 
-    // this code being messed up is independent from the dtrace_param_blocks being messed up.
-    // Make sure you know what's broken
+    // Walk a function body looking for exit points.
+    // See rustc_parse::parser::item::grok_fn_body.
     #[allow(rustc::default_hash_types)]
     fn grok_fn_body(
         &mut self,
@@ -1666,19 +1718,6 @@ impl<'a> DaikonDeclsVisitor<'a> {
         param_to_block_idx: HashMap<String, i32>,
         ret_ty: &FnRetTy,
     ) {
-        // arg_dtraces: String,
-        //let original_len = body.stmts.len();
-        // let entry = build_entry(ppt_name.clone());
-        // i = self.insert_into_block(i, entry, body);
-        // for param_block in &mut *dtrace_param_blocks {
-        //     // :0 very scary scary
-        //     i = self.insert_into_block(i, param_block.clone(), body);
-        // }
-
-        // before grokking fn body, turn implicit void return into "return;"
-        // this may be unreachable in some situations like
-        // fn foo(t: bool) { if t == true { return; } else { return; } }
-
         // look for returns and nested blocks (recurse in those cases)
         let mut exit_counter = 1;
 
@@ -1694,11 +1733,15 @@ impl<'a> DaikonDeclsVisitor<'a> {
                 param_decls,
                 &param_to_block_idx,
                 &ret_ty,
-            ); // match on Semi mainly for now, find return <expr>; and add an exit point.
+            );
         }
     }
 }
 
+// Process a function signature and build up a new Vec<TopLevlDecl>
+// ready to be subsequently written to the decls file before we
+// walk the function body looking for exit points.
+// See rustc_parse::parser::item::grok_fn_sig.
 #[allow(rustc::default_hash_types)]
 fn grok_fn_sig<'a>(
     decl: &'a P<FnDecl>,
@@ -1711,7 +1754,6 @@ fn grok_fn_sig<'a>(
         let var_name = get_param_ident(&decl.inputs[i].pat);
         let mut is_ref = false;
         let mut do_write = true;
-        // TODO: copy this code for getting a TopLevlDecl for the return value.
         let toplevl_decl = match &get_rep_type(&decl.inputs[i].ty.kind, &mut is_ref) {
             RepType::Prim(p_type) => {
                 TopLevlDecl {
@@ -1830,6 +1872,7 @@ fn grok_fn_sig<'a>(
 }
 
 impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
+    // Process a new function and write it to the decls file.
     fn visit_fn(&mut self, fk: FnKind<'a>, _span: rustc_span::Span, _id: rustc_ast::NodeId) {
         match &fk {
             FnKind::Fn(_, _, f) => {
@@ -1849,7 +1892,6 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
                         Some(body) => {
                             // By now, all exit ppts are
                             // explicit Semi(Ret) stmts.
-                            // self.grok_fn_body(body, &ret_ty);
                             self.grok_fn_body(
                                 ppt_name.clone(),
                                 body,
@@ -1867,7 +1909,10 @@ impl<'a> Visitor<'a> for DaikonDeclsVisitor<'a> {
     }
 }
 
+// Lock on the decls file.
 static DECLS: LazyLock<Mutex<Option<std::fs::File>>> = LazyLock::new(|| Mutex::new(dtrace_open()));
+
+// Open the decls file.
 fn dtrace_open() -> Option<std::fs::File> {
     let decls_path = format!("{}{}", *OUTPUT_NAME.lock().unwrap(), ".decls");
     let decls = std::path::Path::new(&decls_path);
@@ -1900,13 +1945,12 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             dir_path,
         });
         let krate = self.fully_expand_fragment(AstFragment::Crate(krate)).make_crate();
-        // decls
-        // pass through entire krate building HashMap<String, P<Item>> (ItemKind::Struct always)  (ok)
-        // create dtrace file and open decls files for writing  (ok, overwriting is done)
-        // apply normal Visitor (non-mutable) and visit fns only, skipping over generated stuff we added
-        // write ppt-enter at each fn
-        // step through the function similar to item.rs to find all return ret;, and write ppt-exit.
-        //   (this re-does some work of counting exit points and finding drop() calls or other invalidations, but eh..)
+        // Decls pass.
+        // First, pass through the entire krate building HashMap<String, P<Item>>
+        //   (value is always an ItemKind::Struct)
+        // Create new decls/dtrace files. Open decls file for writing.
+        // Visit the entire immutable AST with a non-mutable visitor to write the decls file,
+        // skipping over functions we generated.
         if *DO_VISITOR.lock().unwrap() {
             let mut struct_map: HashMap<String, P<Item>> = HashMap::new();
             let mut map_builder = DeclsHashMapBuilder { map: &mut struct_map };
@@ -1925,7 +1969,6 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             decls_visitor.visit_crate(&krate);
         }
 
-        // println!("\n\n\ncrate:\n\n{}", pprust::crate_to_string_for_macros(&krate));
         assert_eq!(krate.id, ast::CRATE_NODE_ID);
         self.cx.trace_macros_diag();
         krate
