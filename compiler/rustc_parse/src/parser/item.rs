@@ -522,11 +522,10 @@ impl<'a> DaikonDtraceVisitor<'a> {
             FnRetTy::Default(_span) => BasicType::NoRet,
             FnRetTy::Ty(ty) => get_basic_type(&ty.kind, &mut ret_is_ref),
         };
-        let pr_ty =
-            match &ret_ty {
-                FnRetTy::Ty(ty) => ty,
-                _ => panic!("Inconsistent return type"),
-            };
+        let pr_ty = match &ret_ty {
+            FnRetTy::Ty(ty) => ty,
+            _ => panic!("Inconsistent return type"),
+        };
         // Process return expr
         let expr = pprust::expr_to_string(&ret_expr);
         let ret_let = build_let_ret(pprust::ty_to_string(&pr_ty), expr.clone());
@@ -857,14 +856,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
                     i += 1;
                 }
                 ExprKind::Ret(Some(return_expr)) => {
-                    self.build_return(&mut i,
-                                      &return_expr,
-                                      body,
-                                      exit_counter,
-                                      ppt_name.clone(),
-                                      dtrace_param_blocks,
-                                      ret_ty,
-                                      daikon_tmp_counter);
+                    self.build_return(
+                        &mut i,
+                        &return_expr,
+                        body,
+                        exit_counter,
+                        ppt_name.clone(),
+                        dtrace_param_blocks,
+                        ret_ty,
+                        daikon_tmp_counter,
+                    );
                 }
                 ExprKind::Call(_call, _params) => {
                     return i + 1;
@@ -878,14 +879,16 @@ impl<'a> DaikonDtraceVisitor<'a> {
             // previous match block.
             StmtKind::Expr(no_semi_expr) => {
                 // we know it is not a block, so it must be trailing no-semi return expr
-                self.build_return(&mut i,
-                                  &no_semi_expr,
-                                  body,
-                                  exit_counter,
-                                  ppt_name.clone(),
-                                  dtrace_param_blocks,
-                                  ret_ty,
-                                  daikon_tmp_counter);
+                self.build_return(
+                    &mut i,
+                    &no_semi_expr,
+                    body,
+                    exit_counter,
+                    ppt_name.clone(),
+                    dtrace_param_blocks,
+                    ret_ty,
+                    daikon_tmp_counter,
+                );
             }
             _ => {
                 return i + 1;
