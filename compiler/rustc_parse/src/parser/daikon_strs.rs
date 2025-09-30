@@ -8,11 +8,6 @@ use crate::parser::item::OUTPUT_NAME;
 // bool
 // () -- why is this possible for parameters :/
 
-// Other types for Daikon to munch
-// str
-// String
-// Vec
-// more to come?
 pub static I8: &str = "i8";
 pub static I16: &str = "i16";
 pub static I32: &str = "i32";
@@ -395,9 +390,6 @@ pub(crate) fn build_print_vec_fields(
     res.push_str(DTRACE_VEC_FIELDS[2]);
     res
 }
-
-// pub(crate) static "dtrace-proint_::<"
-// pub(crate) fn build_print_prim_vec()...
 
 pub(crate) static DAIKON_TMP_VEC_USERDEF: [&str; 8] = [
     "let mut __daikon_tmp",
